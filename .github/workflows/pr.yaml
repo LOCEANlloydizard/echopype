@@ -56,11 +56,18 @@ jobs:
         run: python -m pip install -e ".[plot]"
       - name: Print installed packages
         run: python -m pip list
-      - name: Copying test data to services
+      - name: Download test data from GitHub Release (Windows only)
+        if: matrix.runs-on == 'windows-latest'
+        run: |
+          curl -L -o test_data_ad2cp.zip https://github.com/LOCEANlloydizard/echopype/releases/download/v0.1.0/test_data_ad2cp.zip
+          curl -L -o test_data_ek80.zip https://github.com/LOCEANlloydizard/echopype/releases/download/v0.1.0/test_data_ek80.zip
+          Expand-Archive -Path test_data_ad2cp.zip -DestinationPath ./echopype/test_data
+          Expand-Archive -Path test_data_ek80.zip -DestinationPath ./echopype/test_data
+
+      - name: Copy test data to services (Ubuntu only)
+        if: matrix.runs-on != 'windows-latest'
         run: |
           python .ci_helpers/docker/setup-services.py --deploy --data-only --http-server ${{ job.services.httpserver.id }}
-
-          # Check data endpoint
           curl http://localhost:8080/data/
       - name: Finding changed files
         id: files
