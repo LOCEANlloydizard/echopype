@@ -74,12 +74,19 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install --upgrade pip
       - run: echo "PYTHON_VERSION=${{ matrix.python-version }}" >> $GITHUB_ENV
-      - run: python -m pip install -r requirements-dev.txt
+      - name: Upgrade pip, setuptools, wheel
+        run: python -m pip install --upgrade pip setuptools wheel
+      
+      - name: Install Cython
+        run: python -m pip install cython    
+      - name: Install dev tools
+        run: python -m pip install -r requirements-dev.txt
       - if: ${{ matrix.python-version == '3.12' }}
         run: python -m pip install pytest-github-actions-annotate-failures
       - run: python -m pip install -e ".[plot]"
       - run: python -m pip list
       - name: Download test data from GitHub Release (Windows only)
+        shell: pwsh
         run: |
           $urls = @(
             "ad2cp", "azfp", "azfp6", "ea640", "ecs", "ek60", "ek60_calibrate_chunks",
@@ -93,6 +100,7 @@ jobs:
             Invoke-WebRequest -Uri \"https://github.com/LOCEANlloydizard/echopype/releases/download/v0.1.0/$zip\" -OutFile $zip
             Expand-Archive -Path $zip -DestinationPath ./echopype/test_data -Force
           }
+
       - uses: Ana06/get-changed-files@v2.3.0
         id: files
         with:
