@@ -9,19 +9,14 @@ env:
   NUM_WORKERS: 2
 
 jobs:
-  test:
-    name: ${{ matrix.python-version }}--${{ matrix.runs-on }}
-    runs-on: ${{ matrix.runs-on }}
-    if: ${{ !contains(github.event.pull_request.title, '[skip ci]') }}
-    continue-on-error: ${{ matrix.experimental }}
+  test_linux:
+    name: ${{ matrix.python-version }}--ubuntu-latest
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
-        runs-on: [ubuntu-latest, windows-latest]
-        experimental: [false]
     services:
-      # TODO: figure out how to update tag when there's a new one
       minio:
         image: cormorack/minioci:latest
         ports:
@@ -31,34 +26,60 @@ jobs:
         ports:
           - 8080:80
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Fetch all history for all branches and tags.
-      - name: Set up Python
-        uses: actions/setup-python@v5.5.0
+          fetch-depth: 0
+      - uses: actions/setup-python@v5.5.0
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Upgrade pip
-        run: python -m pip install --upgrade pip
-      - name: Set environment variables
-        run: |
-          echo "PYTHON_VERSION=${{ matrix.python-version }}" >> $GITHUB_ENV
-      - name: Remove docker-compose python
-        run: sed -i "/docker-compose/d" requirements-dev.txt
-      - name: Install dev tools
-        run: python -m pip install -r requirements-dev.txt
-      # We only want to install this on one run, because otherwise we'll have
-      # duplicate annotations.
-      - name: Install error reporter
-        if: ${{ matrix.python-version == '3.12' }}
+      - run: python -m pip install --upgrade pip
+      - run: echo "PYTHON_VERSION=${{ matrix.python-version }}" >> $GITHUB_ENV
+      - run: sed -i "/docker-compose/d" requirements-dev.txt
+      - run: python -m pip install -r requirements-dev.txt
+      - if: ${{ matrix.python-version == '3.12' }}
         run: python -m pip install pytest-github-actions-annotate-failures
-      - name: Install echopype
-        run: python -m pip install -e ".[plot]"
-      - name: Print installed packages
-        run: python -m pip list
+      - run: python -m pip install -e ".[plot]"
+      - run: python -m pip list
+      - run: python .ci_helpers/docker/setup-services.py --deploy --data-only --http-server ${{ job.services.httpserver.id }}
+      - run: curl http://localhost:8080/data/
+      - uses: Ana06/get-changed-files@v2.3.0
+        id: files
+        with:
+          format: 'csv'
+      - run: echo "${{ steps.files.outputs.added_modified_renamed }}"
+      - if: contains(github.event.pull_request.title, '[all tests ci]')
+        run: pytest -vvv -rx --numprocesses=${{ env.NUM_WORKERS }} --max-worker-restart=3 --cov=echopype --cov-report=xml --log-cli-level=WARNING --disable-warnings
+      - if: ${{ !contains(github.event.pull_request.title, '[all tests ci]') }}
+        run: python .ci_helpers/run-test.py --pytest-args="--log-cli-level=WARNING,-vvv,-rx,--numprocesses=${{ env.NUM_WORKERS }},--max-worker-restart=3,--disable-warnings" --include-cov ${{ steps.files.outputs.added_modified_renamed }}
+      - uses: codecov/codecov-action@v5
+        with:
+          file: ./coverage.xml
+          flags: unittests
+          env_vars: RUNNER_OS,PYTHON_VERSION
+          name: codecov-umbrella
+          fail_ci_if_error: false
+
+  test_windows:
+    name: ${{ matrix.python-version }}--windows-latest
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5.5.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install --upgrade pip
+      - run: echo "PYTHON_VERSION=${{ matrix.python-version }}" >> $GITHUB_ENV
+      - run: python -m pip install -r requirements-dev.txt
+      - if: ${{ matrix.python-version == '3.12' }}
+        run: python -m pip install pytest-github-actions-annotate-failures
+      - run: python -m pip install -e ".[plot]"
+      - run: python -m pip list
       - name: Download test data from GitHub Release (Windows only)
-        if: matrix.runs-on == 'windows-latest'
         run: |
           $urls = @(
             "ad2cp", "azfp", "azfp6", "ea640", "ecs", "ek60", "ek60_calibrate_chunks",
@@ -67,34 +88,21 @@ jobs:
             "ek80_missing_sound_velocity_profile", "ek80_new", "ek80_sequence",
             "es60", "es70", "es80", "legacy_datatree"
           )
-      
           foreach ($name in $urls) {
-            $zip = "test_data_${name}.zip"
-            Invoke-WebRequest -Uri "https://github.com/LOCEANlloydizard/echopype/releases/download/v0.1.0/$zip" -OutFile $zip
+            $zip = \"test_data_${name}.zip\"
+            Invoke-WebRequest -Uri \"https://github.com/LOCEANlloydizard/echopype/releases/download/v0.1.0/$zip\" -OutFile $zip
             Expand-Archive -Path $zip -DestinationPath ./echopype/test_data -Force
           }
-      - name: Copy test data to services (Ubuntu only)
-        if: matrix.runs-on != 'windows-latest'
-        run: |
-          python .ci_helpers/docker/setup-services.py --deploy --data-only --http-server ${{ job.services.httpserver.id }}
-          curl http://localhost:8080/data/
-      - name: Finding changed files
+      - uses: Ana06/get-changed-files@v2.3.0
         id: files
-        uses: Ana06/get-changed-files@v2.3.0
         with:
           format: 'csv'
-      - name: Print Changed files
-        run: echo "${{ steps.files.outputs.added_modified_renamed }}"
-      - name: Running all Tests
-        if: contains(github.event.pull_request.title, '[all tests ci]')
-        run: |
-          pytest -vvv -rx --numprocesses=${{ env.NUM_WORKERS }} --max-worker-restart=3 --cov=echopype --cov-report=xml --log-cli-level=WARNING --disable-warnings
-      - name: Running Tests
-        if: ${{ !contains(github.event.pull_request.title, '[all tests ci]') }}
-        run: |
-          python .ci_helpers/run-test.py --pytest-args="--log-cli-level=WARNING,-vvv,-rx,--numprocesses=${{ env.NUM_WORKERS }},--max-worker-restart=3,--disable-warnings" --include-cov ${{ steps.files.outputs.added_modified_renamed }}
-      - name: Upload code coverage to Codecov
-        uses: codecov/codecov-action@v5
+      - run: echo "${{ steps.files.outputs.added_modified_renamed }}"
+      - if: contains(github.event.pull_request.title, '[all tests ci]')
+        run: pytest -vvv -rx --numprocesses=${{ env.NUM_WORKERS }} --max-worker-restart=3 --cov=echopype --cov-report=xml --log-cli-level=WARNING --disable-warnings
+      - if: ${{ !contains(github.event.pull_request.title, '[all tests ci]') }}
+        run: python .ci_helpers/run-test.py --pytest-args=\"--log-cli-level=WARNING,-vvv,-rx,--numprocesses=${{ env.NUM_WORKERS }},--max-worker-restart=3,--disable-warnings\" --include-cov ${{ steps.files.outputs.added_modified_renamed }}
+      - uses: codecov/codecov-action@v5
         with:
           file: ./coverage.xml
           flags: unittests
