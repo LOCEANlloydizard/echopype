@@ -93,7 +93,7 @@ jobs:
             "es60", "es70", "es80", "legacy_datatree"
           )
           foreach ($name in $urls) {
-            $zip = "test_data_${name}.zip"
+            $zip = "${name}.zip"
             Invoke-WebRequest -Uri "https://github.com/LOCEANlloydizard/echopype/releases/download/v0.1.0/$zip" -OutFile $zip
             Expand-Archive -Path $zip -DestinationPath ./echopype/test_data -Force
           }
