@@ -59,11 +59,19 @@ jobs:
       - name: Download test data from GitHub Release (Windows only)
         if: matrix.runs-on == 'windows-latest'
         run: |
-          curl -L -o test_data_ad2cp.zip https://github.com/LOCEANlloydizard/echopype/releases/download/v0.1.0/test_data_ad2cp.zip
-          curl -L -o test_data_ek80.zip https://github.com/LOCEANlloydizard/echopype/releases/download/v0.1.0/test_data_ek80.zip
-          Expand-Archive -Path test_data_ad2cp.zip -DestinationPath ./echopype/test_data
-          Expand-Archive -Path test_data_ek80.zip -DestinationPath ./echopype/test_data
-
+          $urls = @(
+            "ad2cp", "azfp", "azfp6", "ea640", "ecs", "ek60", "ek60_calibrate_chunks",
+            "ek60_missing_channel_power", "ek80", "ek80_bb_complex_multiplex", "ek80_bb_with_calibration",
+            "ek80_duplicate_ping_times", "ek80_ext", "ek80_invalid_env_datagrams",
+            "ek80_missing_sound_velocity_profile", "ek80_new", "ek80_sequence",
+            "es60", "es70", "es80", "legacy_datatree"
+          )
+      
+          foreach ($name in $urls) {
+            $zip = "test_data_${name}.zip"
+            Invoke-WebRequest -Uri "https://github.com/LOCEANlloydizard/echopype/releases/download/v0.1.0/$zip" -OutFile $zip
+            Expand-Archive -Path $zip -DestinationPath ./echopype/test_data -Force
+          }
       - name: Copy test data to services (Ubuntu only)
         if: matrix.runs-on != 'windows-latest'
         run: |
