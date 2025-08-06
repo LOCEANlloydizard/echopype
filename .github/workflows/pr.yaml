@@ -42,11 +42,8 @@ jobs:
       - run: python -m pip list
       - run: python .ci_helpers/docker/setup-services.py --deploy --data-only --http-server ${{ job.services.httpserver.id }}
       - run: curl http://localhost:8080/data/
-      - if: contains(github.event.pull_request.title, '[all tests ci]')
-        run: pytest -vvv -rx --numprocesses=${{ env.NUM_WORKERS }} --max-worker-restart=3 --cov=echopype --cov-report=xml --log-cli-level=WARNING --disable-warnings
-      - if: ${{ !contains(github.event.pull_request.title, '[all tests ci]') }}
-        run: python .ci_helpers/run-test.py --pytest-args="--log-cli-level=WARNING,-vvv,-rx,--numprocesses=${{ env.NUM_WORKERS }},--max-worker-restart=3,--disable-warnings"
-
+      - run: pytest -vvv -rx --numprocesses=${{ env.NUM_WORKERS }} --max-worker-restart=3 --cov=echopype --cov-report=xml --log-cli-level=WARNING --disable-warnings
+      - run: python .ci_helpers/run-test.py --pytest-args="--log-cli-level=WARNING,-vvv,-rx,--numprocesses=${{ env.NUM_WORKERS }},--max-worker-restart=3,--disable-warnings"
       - uses: codecov/codecov-action@v5
         with:
           file: ./coverage.xml
@@ -93,11 +90,8 @@ jobs:
             Invoke-WebRequest -Uri "https://github.com/LOCEANlloydizard/echopype/releases/download/v0.1.0/$zip" -OutFile $zip
             Expand-Archive -Path $zip -DestinationPath ./echopype/test_data -Force
           }
-      - if: contains(github.event.pull_request.title, '[all tests ci]')
-        run: pytest -vvv -rx --numprocesses=${{ env.NUM_WORKERS }} --max-worker-restart=3 --cov=echopype --cov-report=xml --log-cli-level=WARNING --disable-warnings
-      - if: ${{ !contains(github.event.pull_request.title, '[all tests ci]') }}
-        run: python .ci_helpers/run-test.py --pytest-args="--log-cli-level=WARNING,-vvv,-rx,--numprocesses=${{ env.NUM_WORKERS }},--max-worker-restart=3,--disable-warnings"
-
+      - run: pytest -vvv -rx --numprocesses=${{ env.NUM_WORKERS }} --max-worker-restart=3 --cov=echopype --cov-report=xml --log-cli-level=WARNING --disable-warnings
+      - run: python .ci_helpers/run-test.py --pytest-args="--log-cli-level=WARNING,-vvv,-rx,--numprocesses=${{ env.NUM_WORKERS }},--max-worker-restart=3,--disable-warnings"
       - uses: codecov/codecov-action@v5
         with:
           file: ./coverage.xml
