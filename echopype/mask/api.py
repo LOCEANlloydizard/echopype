@@ -15,6 +15,7 @@ from echopype.mask.seafloor_detection.detect_blackwell import detect_blackwell
 
 # for single_target_detection
 from echopype.mask.single_target_detection.detect_esp3 import detect_esp3
+from echopype.mask.single_target_detection.detect_matecho import detect_matecho
 
 from ..utils.io import validate_source
 from ..utils.prov import add_processing_level, echopype_prov_attrs, insert_input_processing_level
@@ -704,9 +705,10 @@ def detect_seafloor(
 
 
 # detect single_target_detection
-# Registry of supported methods (make sure detect_esp3 is imported)
+# Registry of supported methods
 METHODS_SINGLE_TARGET = {
     "esp3": detect_esp3,
+    "matecho": detect_matecho,
 }
 
 
@@ -735,6 +737,6 @@ def detect_single_targets(
         raise ValueError(f"Unsupported single-target method: {method}")
 
     if params is None:
-        raise ValueError(f"No parameters given.")
+        raise ValueError("No parameters given.")
 
     return METHODS_SINGLE_TARGET[method](ds, params)
