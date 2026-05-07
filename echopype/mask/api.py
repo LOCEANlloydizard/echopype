@@ -14,11 +14,11 @@ from flox.xarray import xarray_reduce
 # for seafloor detection
 from echopype.mask.seafloor_detection.bottom_basic import bottom_basic
 from echopype.mask.seafloor_detection.bottom_blackwell import bottom_blackwell
+
+# for single_target_detection
 from echopype.mask.single_target_detection.detect_echoview_split_method2 import (
     detect_echoview_split_method2,
 )
-
-# for single_target_detection
 from echopype.mask.single_target_detection.detect_matecho import detect_matecho
 
 from ..commongrid.utils import (
