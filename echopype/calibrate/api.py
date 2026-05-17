@@ -82,16 +82,23 @@ def _compute_cal(
         cal_obj._check_echodata_backscatter_size()
 
         compute_methods = {
-            "Sv": cal_obj.compute_Sv,
-            "TS": cal_obj.compute_TS,
-            "Sv_f": cal_obj.compute_Sv_f,
-            "TS_f": cal_obj.compute_TS_f,
+            "Sv": "compute_Sv",
+            "TS": "compute_TS",
+            "Sv_f": "compute_Sv_f",
+            "TS_f": "compute_TS_f",
         }
 
         try:
-            compute_method = compute_methods[cal_type]
+            method_name = compute_methods[cal_type]
         except KeyError:
             raise ValueError(f"Unsupported calibration type: {cal_type}") from None
+
+        compute_method = getattr(cal_obj, method_name, None)
+
+        if compute_method is None:
+            raise ValueError(
+                f"{cal_type} calibration is not supported for " f"{echodata.sonar_model} data."
+            )
 
         return compute_method(**kwargs)
 
