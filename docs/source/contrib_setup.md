@@ -139,7 +139,7 @@ and useful pre-commit "hooks" have been configured in the
 [.pre-commit-config.yaml file](https://github.com/OSOceanAcoustics/echopype/blob/main/.pre-commit-config.yaml).
 Current hooks include file formatting (linting) checks
 (trailing spaces, trailing lines, JSON and YAML format checks, etc)
-and Python style autoformatters (PEP8 / flake8, `black` and `isort`).
+and Python style autoformatters (`Ruff`, `black` and `isort`).
 
 To run pre-commit hooks locally, run `pre-commit install` before running the
 docker setup-service deploy statement described above.
