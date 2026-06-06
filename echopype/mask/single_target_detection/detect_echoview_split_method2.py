@@ -401,7 +401,25 @@ def _phase2(
 
 def _pack_targets(feats: xr.Dataset, ds_m2: xr.Dataset) -> xr.Dataset:
     if feats.sizes.get("target", 0) == 0:
-        return xr.Dataset(coords={"target": np.arange(0, dtype=np.int64)})
+        return xr.Dataset(
+            data_vars=dict(
+                ping_time=("target", np.array([], dtype=ds_m2["ping_time"].dtype)),
+                range_sample=("target", np.array([], dtype=np.int64)),
+                frequency_nominal=("target", np.array([], dtype=np.float64)),
+                ping_index=("target", np.array([], dtype=np.int64)),
+                iinf=("target", np.array([], dtype=np.int64)),
+                isup=("target", np.array([], dtype=np.int64)),
+                pulse_len_samples=("target", np.array([], dtype=np.int64)),
+                norm_pulse_len=("target", np.array([], dtype=np.float64)),
+                target_range=("target", np.array([], dtype=np.float64)),
+                ts_uncomp=("target", np.array([], dtype=np.float64)),
+                ts_comp=("target", np.array([], dtype=np.float64)),
+                angle_major_deg=("target", np.array([], dtype=np.float64)),
+                angle_minor_deg=("target", np.array([], dtype=np.float64)),
+            ),
+            coords=dict(target=np.arange(0, dtype=np.int64)),
+            attrs=dict(method="echoview_split_method2"),
+        )
 
     it = feats["ping_index"].values.astype(np.int64)
     p = feats["range_sample"].values.astype(np.int64)
