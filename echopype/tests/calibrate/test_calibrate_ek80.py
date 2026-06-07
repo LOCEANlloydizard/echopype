@@ -299,6 +299,7 @@ def test_ek80_BB_power_from_complex(
         ),
     ],
 )
+
 def test_ek80_BB_power_compute_Sv(
     raw_data_path,
     raw_file_name,

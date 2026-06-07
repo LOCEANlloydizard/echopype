@@ -83,9 +83,10 @@ def _compute_cal(
 
         compute_methods = {
             "Sv": "compute_Sv",
+            "Sp": "compute_Sp",
             "TS": "compute_TS",
             "Sv_f": "compute_Sv_f",
-            "TS_f": "compute_TS_f",
+            "TS_spectrum": "compute_TS_spectrum",
         }
 
         try:
@@ -239,9 +240,10 @@ def _compute_cal(
         ds[cal_type].attrs = {
             "long_name": {
                 "Sv": "Volume backscattering strength (Sv re 1 m-1)",
+                "Sp": "Point scattering strength (Sp re 1 m^2)",
                 "TS": "Target strength (TS re 1 m^2)",
                 "Sv_f": "Frequency-dependent volume backscattering strength (Sv(f) re 1 m-1)",
-                "TS_f": "Frequency-dependent target strength (TS(f) re 1 m^2)",
+                "TS_spectrum": "Frequency-dependent target strength spectrum (TS(f) re 1 m^2)",
             }[cal_type],
             "units": "dB",
         }
@@ -389,6 +391,17 @@ def compute_Sv_f(echodata: EchoData, **kwargs) -> xr.Dataset:
     return _compute_cal(cal_type="Sv_f", echodata=echodata, **kwargs)
 
 
+def compute_Sp(echodata: EchoData, **kwargs) -> xr.Dataset:
+    """
+    Compute point scattering strength (Sp) from raw data.
+
+    For CW data, Sp is computed from received power samples on the range grid.
+    For EK80 broadband/FM complex data, Sp is computed after pulse compression
+    and represents a band-averaged point-scattering-strength echogram.
+    """
+    return _compute_cal(cal_type="Sp", echodata=echodata, **kwargs)
+
+
 def compute_TS(echodata: EchoData, **kwargs):
     """
     Compute target strength (TS) from raw data.
@@ -493,10 +506,9 @@ def compute_TS(echodata: EchoData, **kwargs):
     return _compute_cal(cal_type="TS", echodata=echodata, **kwargs)
 
 
-def compute_TS_f(echodata: EchoData, **kwargs) -> xr.Dataset:
+def compute_TS_spectrum(echodata: EchoData, **kwargs) -> xr.Dataset:
     """
-    Compute frequency-dependent target strength TS(f)
-    from broadband EK80 complex data.
+    Compute broadband frequency-dependent target strength spectrum.
     TODO: add more details here when the function is fully implemented
     """
-    return _compute_cal(cal_type="TS_f", echodata=echodata, **kwargs)
+    return _compute_cal(cal_type="TS_spectrum", echodata=echodata, **kwargs)

@@ -2,17 +2,29 @@ from typing import Dict
 
 import numpy as np
 import xarray as xr
+from tqdm.auto import tqdm
 
 from ..echodata import EchoData
 from ..echodata.simrad import retrieve_correct_beam_group
+from ..utils import uwa
 from ..utils.log import _init_logger
 from .cal_params import _get_interp_da, get_cal_params_EK
 from .calibrate_base import CalibrateBase
 from .ecs import conform_channel_order, ecs_ds2dict, ecs_ev2ep
 from .ek80_complex import (
-    compress_pulse,
+    _align_autocorrelation,
+    _compute_power_from_complex_signal,
+    _compute_svf_power,
+    _compute_svf_spectrum,
+    _compute_ts_spectrum,
+    _compute_ts_spectrum_calibrated,
+    _compute_ts_spectrum_power,
+    _get_autocorrelation,
+    _get_average_signal,
+    _get_hanning_window,
+    _get_pulse_compressed_signal,
+    _get_svf_frequency_grid,
     get_filter_coeff,
-    get_norm_fac,
     get_tau_effective,
     get_transmit_signal,
 )
@@ -171,17 +183,42 @@ class CalibrateEK(CalibrateBase):
             )
             out.name = "Sv"
 
-        elif cal_type == "TS":
-            # Calc gain
+        elif cal_type in ("Sp", "TS"):
             CSp = (
                 10 * np.log10(self.beam["transmit_power"])
                 + 2 * self.cal_params["gain_correction"]
                 + 10 * np.log10(wavelength**2 / (16 * np.pi**2))
             )
 
-            # Calibration and echo integration
-            out = self.beam["backscatter_r"] + spreading_loss * 2 + absorption_loss - CSp
-            out.name = "TS"
+            sp = self.beam["backscatter_r"] + spreading_loss * 2 + absorption_loss - CSp
+
+            if cal_type == "TS":
+                angle_alongship = self.beam["angle_alongship"]
+                angle_athwartship = self.beam["angle_athwartship"]
+
+                angle_offset_alongship = self.cal_params["angle_offset_alongship"]
+                angle_offset_athwartship = self.cal_params["angle_offset_athwartship"]
+                beamwidth_alongship = self.cal_params["beamwidth_alongship"]
+                beamwidth_athwartship = self.cal_params["beamwidth_athwartship"]
+
+                fac_along = (
+                    np.abs(angle_alongship - angle_offset_alongship) / (beamwidth_alongship / 2)
+                ) ** 2
+
+                fac_athwart = (
+                    np.abs(angle_athwartship - angle_offset_athwartship)
+                    / (beamwidth_athwartship / 2)
+                ) ** 2
+
+                beam_correction = (
+                    0.5 * 6.0206 * (fac_along + fac_athwart - 0.18 * fac_along * fac_athwart)
+                )
+
+                out = sp + beam_correction
+            else:
+                out = sp
+
+            out.name = cal_type
 
         # Attach calculated range (with units meter) into data set
         out = out.to_dataset()
@@ -263,6 +300,9 @@ class CalibrateEK60(CalibrateEK):
 
     def compute_TS(self, **kwargs):
         return self._cal_power_samples(cal_type="TS")
+
+    def compute_Sp(self, **kwargs):
+        return self._cal_power_samples(cal_type="Sp")
 
 
 class CalibrateEK80(CalibrateEK):
@@ -480,25 +520,19 @@ class CalibrateEK80(CalibrateEK):
             Power computed from complex samples
         """
 
-        def _get_prx(sig):
-            return (
-                beam["beam"].size  # number of transducer sectors
-                * np.abs(sig.mean(dim="beam")) ** 2
-                / (2 * np.sqrt(2)) ** 2
-                * (np.abs(z_er + z_et) / z_er) ** 2
-                / z_et
-            )
-
-        # Compute power
         if self.waveform_mode == "BB":
-            pc = compress_pulse(
-                backscatter=beam["backscatter_r"] + 1j * beam["backscatter_i"], chirp=chirp
-            )  # has beam dim
-            pc = pc / get_norm_fac(chirp=chirp)  # normalization for each channel
-            prx = _get_prx(pc)  # ensure prx is xr.DataArray
+            signal = _get_pulse_compressed_signal(
+                beam=beam,
+                matched_filter=chirp,
+            )
         else:
-            bs_cw = beam["backscatter_r"] + 1j * beam["backscatter_i"]
-            prx = _get_prx(bs_cw)
+            signal = beam["backscatter_r"] + 1j * beam["backscatter_i"]
+
+        prx = _compute_power_from_complex_signal(
+            signal=signal,
+            z_et=z_et,
+            z_er=z_er,
+        )
 
         prx.name = "received_power"
 
@@ -626,16 +660,20 @@ class CalibrateEK80(CalibrateEK):
 
             out.name = "Sv"
             # out = out.rename_vars({list(out.data_vars.keys())[0]: "Sv"})
+        # remove TS below and create a TS that build on Sp
+        elif cal_type in ("Sp", "TS"):
+            range_safe = self._safe_range_for_log(range_meter)
 
-        elif cal_type == "TS":
+            spreading_loss_safe = 20 * np.log10(range_safe)
+
             out = (
                 10 * np.log10(prx)
-                + 2 * spreading_loss
+                + 2 * spreading_loss_safe
                 + absorption_loss
                 - 10 * np.log10(wavelength**2 * transmit_power / (16 * np.pi**2))
                 - 2 * gain
             )
-            out.name = "TS"
+            out.name = cal_type  # change
 
         # Attach calculated range (with units meter) into data set
         out = out.to_dataset().merge(range_meter)
@@ -658,114 +696,699 @@ class CalibrateEK80(CalibrateEK):
 
         return out
 
-    def _cal_complex_samples_f(
+    ### Common helpers for complex sample calibration and Sv(f)/TS(f) calibration
+
+    def _select_param(
         self,
-        cal_type: str,
+        da: xr.DataArray,
+        channel=None,
+        ping_idx=None,
+    ):
+        """Select channel- and ping-specific parameter values when dimensions exist."""
+        if channel is not None and "channel" in da.dims:
+            da = da.sel(channel=channel)
+        if ping_idx is not None and "ping_time" in da.dims:
+            da = da.isel(ping_time=ping_idx)
+        return da
+
+    def _safe_range_for_log(self, range_meter: xr.DataArray) -> xr.DataArray:
+        """Avoid log10(0) in range-dependent calibration terms."""
+        return range_meter.where(range_meter > 0, 1e-20)
+
+    def _compute_absorption_f(
+        self,
+        frequency: np.ndarray,
+        channel: str,
+        ping_idx: int,
+        sound_speed: float,
+    ) -> np.ndarray:
+        """Compute frequency-dependent absorption for broadband spectra.
+
+        Uses the Francois & Garrison (1982) formulation, matching the
+        absorption model used by CRIMAC ``calc_alpha``.
+        """
+        return uwa.calc_absorption(
+            frequency=frequency,
+            temperature=float(
+                self._select_param(self.env_params["temperature"], channel, ping_idx)
+            ),
+            salinity=float(self._select_param(self.env_params["salinity"], channel, ping_idx)),
+            pressure=float(self._select_param(self.env_params["pressure"], channel, ping_idx)),
+            pH=float(self._select_param(self.env_params["pH"], channel, ping_idx)),
+            sound_speed=sound_speed,
+            formula_source="FG",
+        )
+
+    ### Helpers for Svf
+
+    def _compute_svf(
+        self,
+        power_spectrum: np.ndarray,
+        frequency: np.ndarray,
+        svf_range: np.ndarray,
+        sound_speed: float,
+        absorption_f: np.ndarray,
+        transmit_power: float,
+        psi_f: np.ndarray,
+        gain_f: np.ndarray,
+        window_duration: float,
+    ):
+        """Apply CRIMAC/pyEcholab-style Sv(f) calibration equation.
+
+        Equivalent to CRIMAC ``calcSvf``.
+        """
+        wavelength_f = sound_speed / frequency
+
+        G = (
+            transmit_power * wavelength_f**2 * sound_speed * window_duration * psi_f * gain_f**2
+        ) / (32 * np.pi**2)
+
+        return (
+            10 * np.log10(power_spectrum)
+            + 2 * absorption_f[None, :] * svf_range[:, None]
+            - 10 * np.log10(G[None, :])
+        )
+
+    ### Helpers for TSf
+
+    def _get_beam_compensated_gain(
+        self,
+        channel: str,
+        theta: float,
+        phi: float,
+        frequency: np.ndarray,
+    ) -> np.ndarray:
+        """Calculate beam-compensated gain.
+
+        Equivalent to CRIMAC ``calc_g(theta, phi, f)``.
+        """
+        gain_db = np.interp(
+            frequency,
+            self.vend["cal_frequency"].values,
+            self.vend["gain"].sel(cal_channel_id=channel).values,
+        )
+
+        angle_offset_alongship = np.interp(
+            frequency,
+            self.vend["cal_frequency"].values,
+            self.vend["angle_offset_alongship"].sel(cal_channel_id=channel).values,
+        )
+
+        angle_offset_athwartship = np.interp(
+            frequency,
+            self.vend["cal_frequency"].values,
+            self.vend["angle_offset_athwartship"].sel(cal_channel_id=channel).values,
+        )
+
+        beamwidth_alongship = np.interp(
+            frequency,
+            self.vend["cal_frequency"].values,
+            self.vend["beamwidth_alongship"].sel(cal_channel_id=channel).values,
+        )
+
+        beamwidth_athwartship = np.interp(
+            frequency,
+            self.vend["cal_frequency"].values,
+            self.vend["beamwidth_athwartship"].sel(cal_channel_id=channel).values,
+        )
+
+        fac_along = (np.abs(theta - angle_offset_alongship) / (beamwidth_alongship / 2)) ** 2
+
+        fac_athwart = (np.abs(phi - angle_offset_athwartship) / (beamwidth_athwartship / 2)) ** 2
+
+        beam_correction_db = (
+            0.5 * 6.0206 * (fac_along + fac_athwart - 0.18 * fac_along * fac_athwart)
+        )
+
+        return 10 ** ((gain_db - beam_correction_db) / 10)
+
+    ### Sv(f)/TS(f) calibration pipelines
+
+    def _cal_complex_samples_svf(
+        self,
+        pc: xr.DataArray,
+        matched_filter: Dict,
         frequency_resolution: float = 1000,
         range_step: float = 0.5,
     ) -> xr.Dataset:
-        """Calibrate complex broadband EK80 data to Sv(f) or TS(f).
+        """Compute frequency-dependent volume backscattering strength Sv(f)."""
 
-        Parameters
-        ----------
-        cal_type : str
-            ``"Sv_f"`` for frequency-dependent volume backscattering strength,
-            or ``"TS_f"`` for frequency-dependent target strength.
-        frequency_resolution : float, default 1000
-            Frequency spacing in Hz for the output spectral grid.
-        range_step : float, default 0.5
-            Range spacing in meters for the output Sv(f) window centres.
+        pc_avg = _get_average_signal(pc)
 
-        Returns
-        -------
-        xr.Dataset
-            Prototype calibrated dataset containing ``Sv_f`` or ``TS_f``.
-        """
+        out_by_channel = []
 
-        if self.waveform_mode not in ("FM", "BB") or self.encode_mode != "complex":
-            raise ValueError(f"{cal_type} is only supported for EK80 FM complex data.")
+        for channel in self.beam["channel"].values:
+            if channel not in self.vend["cal_channel_id"].values:
+                continue
 
-        if cal_type == "Sv_f":
-            out = xr.Dataset(
+            pc_avg_ch = pc_avg.sel(channel=channel)
+            range_ch = self.range_meter.sel(channel=channel)
+
+            svf_list = []
+            svf_ping_time = []
+            frequency_ref = None
+            svf_range_ref = None
+
+            for ping_idx in tqdm(range(pc_avg_ch.sizes["ping_time"]), desc=f"{channel}"):
+                pc_avg_1d = pc_avg_ch.isel(ping_time=ping_idx)
+                range_1d = range_ch.isel(ping_time=ping_idx)
+
+                valid = np.isfinite(pc_avg_1d) & np.isfinite(range_1d)
+
+                if not bool(valid.any()):
+                    continue
+
+                pc_avg_1d = pc_avg_1d.where(valid, drop=True).values
+                range_1d = range_1d.where(valid, drop=True).values
+
+                sound_speed = float(
+                    self._select_param(self.env_params["sound_speed"], channel, ping_idx)
+                )
+                transmit_power = float(
+                    self._select_param(self.beam["transmit_power"], channel, ping_idx)
+                )
+                tau = float(
+                    self._select_param(self.beam["transmit_duration_nominal"], channel, ping_idx)
+                )
+                sample_interval = float(
+                    self._select_param(self.beam["sample_interval"], channel, ping_idx)
+                )
+                f_start = float(
+                    self._select_param(self.beam["transmit_frequency_start"], channel, ping_idx)
+                )
+                f_stop = float(
+                    self._select_param(self.beam["transmit_frequency_stop"], channel, ping_idx)
+                )
+                equivalent_beam_angle = float(
+                    self._select_param(self.cal_params["equivalent_beam_angle"], channel, ping_idx)
+                )
+                z_et = float(
+                    self._select_param(self.cal_params["impedance_transducer"], channel, ping_idx)
+                )
+                z_er = float(
+                    self._select_param(self.cal_params["impedance_transceiver"], channel, None)
+                )
+
+                window, n_window, window_duration, fs_dec = _get_hanning_window(
+                    sound_speed=sound_speed,
+                    tau=tau,
+                    sample_interval=sample_interval,
+                )
+
+                frequency, frequency_index = _get_svf_frequency_grid(
+                    f_start=f_start,
+                    f_stop=f_stop,
+                    frequency_resolution=frequency_resolution,
+                    fs_dec=fs_dec,
+                    n_window=n_window,
+                )
+
+                _, mf_auto_spectrum = _get_autocorrelation(
+                    matched_filter=matched_filter[channel],
+                    n_window=n_window,
+                )
+
+                step = max(
+                    1,
+                    int(np.round(range_step / np.nanmedian(np.diff(range_1d)))),
+                )
+
+                pc_spread = pc_avg_1d * range_1d
+
+                normalized_spectrum, svf_range = _compute_svf_spectrum(
+                    pc_spread=pc_spread,
+                    range_meter=range_1d,
+                    window=window,
+                    n_window=n_window,
+                    frequency_index=frequency_index,
+                    mf_auto_spectrum=mf_auto_spectrum,
+                    step=step,
+                )
+
+                if normalized_spectrum.size == 0:
+                    continue
+
+                power_spectrum = _compute_svf_power(
+                    normalized_spectrum=normalized_spectrum,
+                    n_beams=self.beam["beam"].size,
+                    z_et=z_et,
+                    z_er=z_er,
+                )
+
+                gain_db = np.interp(
+                    frequency,
+                    self.vend["cal_frequency"].values,
+                    self.vend["gain"].sel(cal_channel_id=channel).values,
+                )
+                gain_f = 10 ** (gain_db / 10)
+
+                frequency_nominal = float(
+                    self._select_param(self.beam["frequency_nominal"], channel, None)
+                )
+                psi_f = 10 ** (equivalent_beam_angle / 10) * (frequency_nominal / frequency) ** 2
+
+                absorption_f = self._compute_absorption_f(
+                    frequency=frequency,
+                    channel=channel,
+                    ping_idx=ping_idx,
+                    sound_speed=sound_speed,
+                )
+
+                svf = self._compute_svf(
+                    power_spectrum=power_spectrum,
+                    frequency=frequency,
+                    svf_range=svf_range,
+                    sound_speed=sound_speed,
+                    absorption_f=absorption_f,
+                    transmit_power=transmit_power,
+                    psi_f=psi_f,
+                    gain_f=gain_f,
+                    window_duration=window_duration,
+                )
+
+                if frequency_ref is None:
+                    frequency_ref = frequency
+                    svf_range_ref = svf_range
+                elif (
+                    frequency.shape != frequency_ref.shape or svf_range.shape != svf_range_ref.shape
+                ):
+                    continue
+
+                svf_list.append(svf)
+                svf_ping_time.append(self.beam["ping_time"].isel(ping_time=ping_idx).values)
+
+            if not svf_list:
+                continue
+
+            ds_ch = xr.Dataset(
                 {
                     "Sv_f": (
                         ["channel", "ping_time", "svf_range", "frequency"],
-                        np.full(
-                            (
-                                self.beam.sizes["channel"],
-                                self.beam.sizes["ping_time"],
-                                self.range_meter.sizes["range_sample"],
-                                1,
-                            ),
-                            np.nan,
-                        ),
+                        np.asarray(svf_list)[None, :, :, :],
                     )
                 },
                 coords={
-                    "channel": self.beam["channel"],
-                    "ping_time": self.beam["ping_time"],
-                    "svf_range": self.range_meter.isel(channel=0, ping_time=0).values,
-                    "frequency": [np.nan],
+                    "channel": [channel],
+                    "ping_time": svf_ping_time,
+                    "svf_range": svf_range_ref,
+                    "frequency": frequency_ref,
                 },
             )
 
-        elif cal_type == "TS_f":
-            raise NotImplementedError("TS_f not implemented yet.")
+            out_by_channel.append(ds_ch)
 
-        else:
-            raise ValueError(f"Unsupported calibration type: {cal_type}")
+        if not out_by_channel:
+            raise ValueError("No valid Sv(f) pings produced.")
 
-        return out
+        return xr.concat(out_by_channel, dim="channel")
+
+    def _cal_complex_samples_TS_spectrum(
+        self,
+        pc: xr.DataArray,
+        matched_filter: Dict,
+        point_locations: xr.Dataset,
+        NFFT: int | None = None,
+        n_f_points: int | None = None,
+        split_front: float = 0.25,
+        window: str | None = None,
+        frequency_resolution: float | None = None,
+    ) -> xr.Dataset:
+        """Compute frequency-dependent target strength spectrum."""
+
+        if point_locations is None:
+            raise ValueError("TS_spectrum requires a point_locations dataset.")
+
+        if not 0 <= split_front <= 1:
+            raise ValueError("split_front must be between 0 and 1.")
+
+        pc_avg = _get_average_signal(pc)
+
+        out_by_channel = []
+
+        for channel in self.beam["channel"].values:
+            if channel not in self.vend["cal_channel_id"].values:
+                continue
+
+            points_ch = point_locations.where(
+                point_locations["channel"] == channel,
+                drop=True,
+            )
+
+            if points_ch.sizes.get("target_id", 0) == 0:
+                continue
+
+            pc_avg_ch = pc_avg.sel(channel=channel)
+            range_ch = self.range_meter.sel(channel=channel)
+
+            ts_list = []
+            target_range_list = []
+            theta_list = []
+            phi_list = []
+            ping_time_list = []
+            target_id_list = []
+            frequency_ref = None
+
+            for point_idx in tqdm(range(points_ch.sizes["target_id"]), desc=f"{channel}"):
+                point_ping_time = points_ch["ping_time"].isel(target_id=point_idx).values
+                target_range = float(points_ch["target_range"].isel(target_id=point_idx))
+
+                theta_t = float(points_ch["angle_alongship"].isel(target_id=point_idx))
+                phi_t = float(points_ch["angle_athwartship"].isel(target_id=point_idx))
+                target_id = points_ch["target_id"].isel(target_id=point_idx).values
+
+                ping_idx = int(
+                    np.argmin(
+                        np.abs(
+                            self.beam["ping_time"].values.astype("datetime64[ns]")
+                            - np.datetime64(point_ping_time, "ns")
+                        )
+                    )
+                )
+
+                pc_avg_1d = pc_avg_ch.isel(ping_time=ping_idx)
+                range_1d = range_ch.isel(ping_time=ping_idx)
+
+                valid = np.isfinite(pc_avg_1d) & np.isfinite(range_1d)
+
+                if not bool(valid.any()):
+                    continue
+
+                pc_avg_1d = pc_avg_1d.where(valid, drop=True).values
+                range_1d = range_1d.where(valid, drop=True).values
+
+                sound_speed = float(
+                    self._select_param(self.env_params["sound_speed"], channel, ping_idx)
+                )
+                transmit_power = float(
+                    self._select_param(self.beam["transmit_power"], channel, ping_idx)
+                )
+                sample_interval = float(
+                    self._select_param(self.beam["sample_interval"], channel, ping_idx)
+                )
+                f_start = float(
+                    self._select_param(self.beam["transmit_frequency_start"], channel, ping_idx)
+                )
+                f_stop = float(
+                    self._select_param(self.beam["transmit_frequency_stop"], channel, ping_idx)
+                )
+
+                if frequency_resolution is not None:
+                    n_f_points_local = int(np.floor((f_stop - f_start) / frequency_resolution)) + 1
+                else:
+                    n_f_points_local = n_f_points if n_f_points is not None else 1000
+
+                frequency = np.linspace(f_start, f_stop, n_f_points_local)
+
+                if NFFT is None:
+                    n_fft = int(2 ** np.ceil(np.log2(n_f_points_local)))
+                else:
+                    n_fft = NFFT
+
+                z_et = float(
+                    self._select_param(self.cal_params["impedance_transducer"], channel, ping_idx)
+                )
+                z_er = float(
+                    self._select_param(self.cal_params["impedance_transceiver"], channel, None)
+                )
+
+                fs_dec = 1 / sample_interval
+
+                absorption_f = self._compute_absorption_f(
+                    frequency=frequency,
+                    channel=channel,
+                    ping_idx=ping_idx,
+                    sound_speed=sound_speed,
+                )
+
+                ########## try to fix something ???????
+
+                target_range_min = float(points_ch["target_range_min"].isel(target_id=point_idx))
+                target_range_max = float(points_ch["target_range_max"].isel(target_id=point_idx))
+
+                target_mask = (range_1d >= target_range_min) & (range_1d <= target_range_max)
+
+                if not np.any(target_mask):
+                    continue
+
+                pc_target = pc_avg_1d[target_mask]
+
+                if window == "hann":
+                    win = np.hanning(pc_target.size)
+                elif window == "hamming":
+                    win = np.hamming(pc_target.size)
+                elif window in (None, "boxcar", "rectangular"):
+                    win = np.ones(pc_target.size)
+                else:
+                    raise ValueError(f"Unsupported window: {window}")
+
+                pc_target = pc_target * win
+
+                ##########
+
+                mf_auto, _ = _get_autocorrelation(
+                    matched_filter=matched_filter[channel],
+                    n_window=n_fft,
+                )
+
+                mf_auto_red = _align_autocorrelation(
+                    mf_auto=mf_auto,
+                    pc_target=pc_target,
+                )
+
+                if mf_auto_red.size < n_fft:
+                    mf_pad = np.zeros(n_fft, dtype=complex)
+                    mf_pad[: mf_auto_red.size] = mf_auto_red
+                    mf_auto_red = mf_pad
+                elif mf_auto_red.size > n_fft:
+                    mf_auto_red = mf_auto_red[:n_fft]
+
+                _, _, normalized_spectrum = _compute_ts_spectrum(
+                    pc_target=pc_target,
+                    mf_auto_red=mf_auto_red,
+                    NFFT=n_fft,
+                    frequency=frequency,
+                    fs_dec=fs_dec,
+                )
+
+                power_spectrum = _compute_ts_spectrum_power(
+                    normalized_spectrum=normalized_spectrum,
+                    n_beams=self.beam["beam"].size,
+                    z_et=z_et,
+                    z_er=z_er,
+                )
+
+                gain_f = self._get_beam_compensated_gain(
+                    channel=channel,
+                    theta=theta_t,
+                    phi=phi_t,
+                    frequency=frequency,
+                )
+
+                ts = _compute_ts_spectrum_calibrated(
+                    power_spectrum=power_spectrum,
+                    target_range=target_range,
+                    frequency=frequency,
+                    sound_speed=sound_speed,
+                    absorption_f=absorption_f,
+                    transmit_power=transmit_power,
+                    gain_f=gain_f,
+                )
+
+                if frequency_ref is None:
+                    frequency_ref = frequency
+                elif frequency.shape != frequency_ref.shape:
+                    continue
+
+                ts_list.append(ts)
+                target_range_list.append(target_range)
+                theta_list.append(theta_t)
+                phi_list.append(phi_t)
+                ping_time_list.append(point_ping_time)
+                target_id_list.append(target_id)
+
+            if not ts_list:
+                continue
+
+            ds_ch = xr.Dataset(
+                {
+                    "TS_spectrum": (
+                        ["channel", "target_id", "frequency"],
+                        np.asarray(ts_list)[None, :, :],
+                    ),
+                    "target_range": (
+                        ["channel", "target_id"],
+                        np.asarray(target_range_list)[None, :],
+                    ),
+                    "angle_alongship": (
+                        ["channel", "target_id"],
+                        np.asarray(theta_list)[None, :],
+                    ),
+                    "angle_athwartship": (
+                        ["channel", "target_id"],
+                        np.asarray(phi_list)[None, :],
+                    ),
+                    "ping_time": (
+                        ["channel", "target_id"],
+                        np.asarray(ping_time_list)[None, :],
+                    ),
+                },
+                coords={
+                    "channel": [channel],
+                    "target_id": np.asarray(target_id_list),
+                    "frequency": frequency_ref,
+                },
+            )
+
+            out_by_channel.append(ds_ch)
+
+        if not out_by_channel:
+            raise ValueError("No valid TS_spectrum targets produced.")
+
+        return xr.concat(out_by_channel, dim="channel")
+
+    ### Dispatchers
+
+    def _cal_complex_samples_f(
+        self,
+        cal_type: str,
+        frequency_resolution: float | None = None,
+        range_step: float = 0.5,
+        point_locations: xr.Dataset | None = None,
+        NFFT: int | None = None,
+        n_f_points: int | None = None,
+        split_front: float = 0.25,
+        window: str | None = None,
+    ) -> xr.Dataset:
+        """Calibrate EK80 FM complex data to frequency-dependent Sv(f) or TS(f)."""
+        if self.waveform_mode not in ("FM", "BB") or self.encode_mode != "complex":
+            raise ValueError(f"{cal_type} is only supported for EK80 FM complex data.")
+
+        tx_coeff = get_filter_coeff(self.vend)
+        fs = self.cal_params["receiver_sampling_frequency"]
+
+        matched_filter, _ = get_transmit_signal(
+            self.beam,
+            tx_coeff,
+            self.waveform_mode,
+            fs,
+            self.drop_last_hanning_zero,
+        )
+
+        pc = _get_pulse_compressed_signal(
+            beam=self.beam,
+            matched_filter=matched_filter,
+        )
+
+        if cal_type == "Sv_f":
+            return self._cal_complex_samples_svf(
+                pc=pc,
+                matched_filter=matched_filter,
+                frequency_resolution=frequency_resolution,
+                range_step=range_step,
+            )
+
+        if cal_type == "TS_spectrum":
+            return self._cal_complex_samples_TS_spectrum(
+                pc=pc,
+                matched_filter=matched_filter,
+                point_locations=point_locations,
+                NFFT=NFFT,
+                n_f_points=n_f_points,
+                split_front=split_front,
+                window=window,
+                frequency_resolution=frequency_resolution,
+            )
+
+        raise ValueError(f"Unsupported calibration type: {cal_type}")
 
     def _compute_cal(self, cal_type, **kwargs) -> xr.Dataset:
         """
-        Private method to compute Sv or TS from EK80 data, called by compute_Sv or compute_TS.
+        Private dispatcher for EK80 calibration.
+
+        This routes calibration to one of three paths:
+
+        1. Power-sample CW calibration:
+        Used for EK60 and EK80 power-encoded CW data.
+
+        2. Complex-sample calibration:
+        Used for EK80 complex data in CW or BB/FM mode. For BB/FM data,
+        this path computes the conventional broadband-averaged Sv, Sp, or
+        legacy TS-like gridded product: pulse compression is applied,
+        transducer sectors are averaged, received power is computed, and the
+        standard calibration equation is used.
+
+        3. Frequency-dependent complex-sample calibration:
+        Used for EK80 BB/FM complex data when computing Sv(f) or TS(f).
+        This path keeps the pulse-compressed signal before final calibration
+        so that FFT-based spectral processing can be applied.
 
         Parameters
         ----------
         cal_type : str
-            'Sv' for calculating volume backscattering strength, or
-            'TS' for calculating target strength
+            Calibration type. Supported values include ``"Sv"``, ``"Sp"``,
+            ``"TS"``, ``"Sv_f"``, and ``"TS_spectrum"``.
 
         Returns
         -------
         xr.Dataset
-            An xarray Dataset containing either Sv or TS.
+            Dataset containing the calibrated output requested by ``cal_type``.
         """
         # Set flag_complex: True-complex cal, False-power cal
         flag_complex = (
             True if self.waveform_mode == "BB" or self.encode_mode == "complex" else False
         )
 
-        if cal_type in ("Sv_f", "TS_f"):
-            # Frequency-dependent broadband calibration
+        if cal_type in ("Sv_f", "TS_spectrum"):
+            # Frequency-dependent broadband calibration: keep pulse-compressed
+            # signal for FFT-based Sv(f) or TS(f) processing.
             ds_cal = self._cal_complex_samples_f(cal_type=cal_type, **kwargs)
         elif flag_complex:
-            # Complex samples can be BB or CW
+            # Complex-sample calibration: BB/FM data are pulse-compressed and
+            # averaged over transducer sectors before computing conventional
+            # Sv/Sp/legacy gridded TS. CW complex data are calibrated directly
+            # from complex samples.
             ds_cal = self._cal_complex_samples(cal_type=cal_type)
         else:
-            # Power samples only make sense for CW mode data
+            # Power-sample calibration: applies to power-encoded CW data.
             ds_cal = self._cal_power_samples(cal_type=cal_type)
 
         return ds_cal
+
+    ### Public API
 
     def compute_Sv(self):
         """Compute volume backscattering strength (Sv).
 
         Returns
         -------
-        Sv : xr.DataSet
+        Sv : xr.Dataset
             A DataSet containing volume backscattering strength (``Sv``)
             and the corresponding range (``echo_range``) in units meter.
         """
         return self._compute_cal(cal_type="Sv")
+
+    def compute_Sp(self):
+        """Compute point scattering strength Sp.
+
+        For CW data, this is computed from the received power samples on the
+        range grid. For FM complex data, this is computed after pulse
+        compression and represents a band-averaged point-scattering-strength
+        echogram.
+
+        Returns
+        -------
+        Sp : xr.Dataset
+            Dataset containing point scattering strength (``Sp``) and the
+            corresponding range (``echo_range``) in metres.
+        """
+        return self._compute_cal(cal_type="Sp")
 
     def compute_TS(self):
         """Compute target strength (TS).
 
         Returns
         -------
-        TS : xr.DataSet
+        TS : xr.Dataset
             A DataSet containing target strength (``TS``)
             and the corresponding range (``echo_range``) in units meter.
         """
@@ -789,7 +1412,15 @@ class CalibrateEK80(CalibrateEK):
             range_step=range_step,
         )
 
-    def compute_TS_f(self):
+    def compute_TS_spectrum(
+        self,
+        point_locations: xr.Dataset,
+        NFFT: int | None = None,
+        n_f_points: int | None = None,
+        split_front: float = 0.25,
+        window: str = None,
+        frequency_resolution: float | None = None,
+    ):
         """Compute frequency-dependent target strength TS(f).
 
         Returns
@@ -797,4 +1428,12 @@ class CalibrateEK80(CalibrateEK):
         TS_f : xr.Dataset
             A Dataset containing frequency-dependent target strength.
         """
-        return self._compute_cal(cal_type="TS_f")
+        return self._compute_cal(
+            cal_type="TS_spectrum",
+            point_locations=point_locations,
+            NFFT=NFFT,
+            n_f_points=n_f_points,
+            split_front=split_front,
+            window=window,
+            frequency_resolution=frequency_resolution,
+        )

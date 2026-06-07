@@ -101,7 +101,7 @@ def test_compute_Sv_ek60_matlab(ek60_path):
 
     # Calibrate to get Sv
     ds_Sv = ep.calibrate.compute_Sv(echodata)
-    ds_TS = ep.calibrate.compute_TS(echodata)
+    ds_Sp = ep.calibrate.compute_Sp(echodata)
 
     # Load matlab outputs and test
 
@@ -117,10 +117,10 @@ def test_compute_Sv_ek60_matlab(ek60_path):
             assert np.allclose(pyel_vals, ep_vals)
 
     # Check Sv
-    check_output(ds_Sv['Sv'], 'Sv')
+    check_output(ds_Sv["Sv"], "Sv")
 
-    # Check TS
-    check_output(ds_TS['TS'], 'Sp')
+    # Check Sp
+    check_output(ds_Sp["Sp"], "Sp")
 
 
 @pytest.mark.integration
@@ -137,10 +137,10 @@ def test_compute_Sv_ek60_duplicated_freq(ek60_path):
 
     # Calibrate to get Sv
     ds_Sv = ep.calibrate.compute_Sv(echodata)
-    ds_TS = ep.calibrate.compute_TS(echodata)
+    ds_Sp = ep.calibrate.compute_Sp(echodata)
 
     assert isinstance(ds_Sv, xr.Dataset)
-    assert isinstance(ds_TS, xr.Dataset)
+    assert isinstance(ds_Sp, xr.Dataset)
 
 
 @pytest.mark.integration

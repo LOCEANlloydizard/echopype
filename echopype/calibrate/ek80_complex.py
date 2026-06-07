@@ -9,6 +9,314 @@ from scipy import signal
 from ..convert.set_groups_ek80 import DECIMATION, FILTER_IMAG, FILTER_REAL
 
 
+def _compute_power_from_complex_signal(
+    signal: xr.DataArray,
+    z_et,
+    z_er,
+) -> xr.DataArray:
+    """Calculate received electrical power from sector-level complex samples.
+
+    The input is expected to retain the ``beam`` dimension. The function
+    averages over transducer sectors internally before converting the
+    complex signal to received electrical power.
+
+    Equivalent to CRIMAC ``calcPower``.
+    """
+    prx = (
+        signal["beam"].size
+        * np.abs(signal.mean(dim="beam")) ** 2
+        / (2 * np.sqrt(2)) ** 2
+        * (np.abs(z_er + z_et) / np.abs(z_er)) ** 2
+        / np.abs(z_et)
+    )
+
+    prx = prx.where(prx > 0, 1e-20)
+    prx.name = "received_power"
+
+    return prx
+
+
+def _align_autocorrelation(
+    mf_auto: np.ndarray,
+    pc_target: np.ndarray,
+) -> np.ndarray:
+    """Align matched-filter autocorrelation to target echo.
+
+    Equivalent to CRIMAC ``alignAuto``.
+    """
+    idx_peak_auto = np.argmax(np.abs(mf_auto))
+    idx_peak_target = np.argmax(np.abs(pc_target))
+
+    left_samples = idx_peak_target
+    right_samples = len(pc_target) - idx_peak_target
+
+    idx_start = max(0, idx_peak_auto - left_samples)
+    idx_stop = min(len(mf_auto), idx_peak_auto + right_samples)
+
+    return mf_auto[idx_start:idx_stop]
+
+
+def _compute_ts_spectrum(
+    pc_target: np.ndarray,
+    mf_auto_red: np.ndarray,
+    NFFT: int,
+    frequency: np.ndarray,
+    fs_dec: float,
+):
+    """Compute target, autocorrelation, and normalised DFTs for TS spectrum.
+
+    Equivalent to CRIMAC ``calcDFTforTS``, with explicit NFFT.
+    """
+    frequency_index = np.mod(
+        np.floor(frequency / fs_dec * NFFT).astype(int),
+        NFFT,
+    )
+
+    pc_target_spectrum = np.fft.fft(pc_target, n=NFFT)[frequency_index]
+    mf_auto_red_spectrum = np.fft.fft(mf_auto_red, n=NFFT)[frequency_index]
+
+    normalized_spectrum = pc_target_spectrum / mf_auto_red_spectrum
+
+    return pc_target_spectrum, mf_auto_red_spectrum, normalized_spectrum
+
+
+def _get_hanning_window(
+    sound_speed: float,
+    tau: float,
+    sample_interval: float,
+):
+    """Get normalized Hann window for Sv(f) sliding-window FFT.
+
+    Equivalent to CRIMAC ``defHanningWindow``.
+    """
+    dr = sample_interval * sound_speed / 2
+    fs_dec = 1 / sample_interval
+
+    L = sound_speed * 2 * tau / dr
+    n_window = int(2 ** np.ceil(np.log2(L)))
+
+    window = np.hanning(n_window)
+    window = window / (np.linalg.norm(window) / np.sqrt(n_window))
+
+    window_duration = n_window / fs_dec
+
+    return window, n_window, window_duration, fs_dec
+
+
+def _compute_svf_spectrum(
+    pc_spread: np.ndarray,
+    range_meter: np.ndarray,
+    window: np.ndarray,
+    n_window: int,
+    frequency_index: np.ndarray,
+    mf_auto_spectrum: np.ndarray,
+    step: int = 1,
+):
+    """Compute normalized sliding-window spectrum for Sv(f).
+
+    Equivalent to CRIMAC ``calcDFTforSv``.
+    """
+    mf_auto_spectrum_f = mf_auto_spectrum[frequency_index]
+
+    normalized_spectrum = []
+    svf_range = []
+
+    for start in range(0, len(pc_spread) - n_window, step):
+        stop = start + n_window
+
+        windowed_signal = window * pc_spread[start:stop]
+        signal_spectrum = np.fft.fft(windowed_signal, n=n_window)[frequency_index]
+
+        normalized_spectrum.append(signal_spectrum / mf_auto_spectrum_f)
+
+        center = (start + stop) // 2
+        svf_range.append(range_meter[center])
+
+    return np.asarray(normalized_spectrum), np.asarray(svf_range)
+
+
+def _compute_ts_spectrum_calibrated(
+    power_spectrum: np.ndarray,
+    target_range: float,
+    frequency: np.ndarray,
+    sound_speed: float,
+    absorption_f: np.ndarray,
+    transmit_power: float,
+    gain_f: np.ndarray,
+):
+    """Apply CRIMAC-style TS(f) calibration equation.
+
+    Equivalent to CRIMAC ``calcTSf``.
+    """
+    wavelength_f = sound_speed / frequency
+
+    return (
+        10 * np.log10(power_spectrum)
+        + 40 * np.log10(target_range)
+        + 2 * absorption_f * target_range
+        - 10 * np.log10(transmit_power * wavelength_f**2 * gain_f**2 / (16 * np.pi**2))
+    )
+
+
+def _get_splitbeam_angles(
+    pc: xr.DataArray,
+    gamma_alongship,
+    gamma_athwartship,
+) -> tuple[xr.DataArray, xr.DataArray]:
+    """Calculate split-beam physical angles.
+
+    Equivalent to CRIMAC ``calcAngles``.
+    """
+    pc_fore, pc_aft, pc_star, pc_port = _get_transducer_halves(pc)
+
+    y_theta = pc_fore * np.conj(pc_aft)
+    y_phi = pc_star * np.conj(pc_port)
+
+    theta = np.rad2deg(np.arcsin(np.arctan2(np.imag(y_theta), np.real(y_theta)) / gamma_alongship))
+
+    phi = np.rad2deg(np.arcsin(np.arctan2(np.imag(y_phi), np.real(y_phi)) / gamma_athwartship))
+
+    theta.name = "angle_alongship"
+    phi.name = "angle_athwartship"
+
+    return theta, phi
+
+
+def _get_transducer_halves(
+    pc: xr.DataArray,
+) -> tuple[xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray]:
+    """Calculate half-transducer pulse-compressed signals.
+
+    Equivalent to CRIMAC ``calcTransducerHalves``.
+    """
+    pc_fore = 0.5 * (pc.isel(beam=2) + pc.isel(beam=3))
+    pc_aft = 0.5 * (pc.isel(beam=0) + pc.isel(beam=1))
+    pc_star = 0.5 * (pc.isel(beam=0) + pc.isel(beam=3))
+    pc_port = 0.5 * (pc.isel(beam=1) + pc.isel(beam=2))
+
+    return pc_fore, pc_aft, pc_star, pc_port
+
+
+def _compute_svf_power(
+    normalized_spectrum: np.ndarray,
+    n_beams: int,
+    z_et: float,
+    z_er: float,
+):
+    """Convert normalized Sv(f) spectrum to received power spectrum.
+
+    Equivalent to CRIMAC ``calcPowerFreqSv``.
+    """
+    return _compute_complex_power(
+        normalized_spectrum=normalized_spectrum,
+        n_beams=n_beams,
+        z_et=z_et,
+        z_er=z_er,
+    )
+
+
+def _get_svf_frequency_grid(
+    f_start: float,
+    f_stop: float,
+    frequency_resolution: float,
+    fs_dec: float,
+    n_window: int,
+):
+    """Get Sv(f) frequency grid and corresponding FFT indices."""
+
+    n_f_points = int(np.floor((f_stop - f_start) / frequency_resolution)) + 1
+    frequency = f_start + np.arange(n_f_points) * frequency_resolution
+
+    frequency_index = np.mod(
+        np.floor(frequency / fs_dec * n_window).astype(int),
+        n_window,
+    )
+
+    return frequency, frequency_index
+
+
+def _compute_ts_spectrum_power(
+    normalized_spectrum: np.ndarray,
+    n_beams: int,
+    z_et: float,
+    z_er: float,
+):
+    """Convert normalised TS(f) spectrum to received power spectrum.
+
+    Equivalent to CRIMAC ``calcPowerFreqTS``.
+    """
+    return _compute_complex_power(
+        normalized_spectrum=normalized_spectrum,
+        n_beams=n_beams,
+        z_et=z_et,
+        z_er=z_er,
+    )
+
+
+def _get_autocorrelation(
+    matched_filter: np.ndarray,
+    n_window: int,
+):
+    """Get matched-filter autocorrelation spectrum.
+
+    Equivalent to CRIMAC ``calcAutoCorrelation``.
+    """
+    mf_auto = (
+        np.convolve(
+            matched_filter,
+            np.conj(matched_filter[::-1]),
+            mode="full",
+        )
+        / np.linalg.norm(matched_filter) ** 2
+    )
+
+    mf_auto_spectrum = np.fft.fft(mf_auto, n=n_window)
+
+    return mf_auto, mf_auto_spectrum
+
+
+def _get_pulse_compressed_signal(
+    beam: xr.Dataset,
+    matched_filter: Dict,
+) -> xr.DataArray:
+    """Calculate pulse-compressed complex samples for each transducer sector.
+
+    Equivalent to CRIMAC ``calcPulseCompressedSignals``.
+    """
+    pc = compress_pulse(
+        backscatter=beam["backscatter_r"] + 1j * beam["backscatter_i"],
+        chirp=matched_filter,
+    )
+    pc = pc / get_norm_fac(chirp=matched_filter)
+    pc.name = "pulse_compressed_signal"
+
+    return pc
+
+
+def _get_average_signal(
+    signal: xr.DataArray,
+) -> xr.DataArray:
+    """Average complex signal over transducer sectors.
+
+    Equivalent to CRIMAC ``calcAverageSignal``.
+    """
+    out = signal.mean(dim="beam")
+    out.name = "average_signal"
+
+    return out
+
+
+def _compute_complex_power(
+    normalized_spectrum: np.ndarray,
+    n_beams: int,
+    z_et: float,
+    z_er: float,
+):
+    impedance_factor = (np.abs(z_er + z_et) / np.abs(z_er)) ** 2 / np.abs(z_et)
+
+    return n_beams * (np.abs(normalized_spectrum) / (2 * np.sqrt(2))) ** 2 * impedance_factor
+
+
 def tapered_chirp(
     fs,
     transmit_duration_nominal,
