@@ -129,15 +129,6 @@ if os.getenv("USE_POOCH") == "True" and os.getenv("PYTEST_XDIST_WORKER") is None
         return str(out)
 
     for b in bundles:
-        out = TEST_DATA_FOLDER / Path(b).stem
-
-        zip_path = TEST_DATA_FOLDER / b
-
-        if zip_path.exists() and out.exists() and any(out.iterdir()):
-            print(f"[echopype-ci] using cached bundle: {b}")
-            print(f"[echopype-ci]   -> {out}")
-            continue
-
         url = base.format(version=ver) + b
         print(f"[echopype-ci] fetching bundle: {b}")
         print(f"[echopype-ci]   -> URL: {url}")
