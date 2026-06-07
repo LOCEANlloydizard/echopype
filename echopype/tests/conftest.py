@@ -17,7 +17,7 @@ if os.getenv("USE_POOCH") == "True" and os.getenv("PYTEST_XDIST_WORKER") is None
     # Lock to the known-good assets release (can be overridden via env if needed)
     base = os.getenv(
         "ECHOPYPE_DATA_BASEURL",
-        "https://github.com/OSOceanAcoustics/echopype/releases/download/{version}/",
+        "https://github.com/echostack-org/echopype/releases/download/{version}/",
     )
     cache_dir = pooch.os_cache("echopype")
 
