@@ -158,45 +158,6 @@ def _compute_ts_spectrum_calibrated(
     )
 
 
-def _get_splitbeam_angles(
-    pc: xr.DataArray,
-    gamma_alongship,
-    gamma_athwartship,
-) -> tuple[xr.DataArray, xr.DataArray]:
-    """Calculate split-beam physical angles.
-
-    Equivalent to CRIMAC ``calcAngles``.
-    """
-    pc_fore, pc_aft, pc_star, pc_port = _get_transducer_halves(pc)
-
-    y_theta = pc_fore * np.conj(pc_aft)
-    y_phi = pc_star * np.conj(pc_port)
-
-    theta = np.rad2deg(np.arcsin(np.arctan2(np.imag(y_theta), np.real(y_theta)) / gamma_alongship))
-
-    phi = np.rad2deg(np.arcsin(np.arctan2(np.imag(y_phi), np.real(y_phi)) / gamma_athwartship))
-
-    theta.name = "angle_alongship"
-    phi.name = "angle_athwartship"
-
-    return theta, phi
-
-
-def _get_transducer_halves(
-    pc: xr.DataArray,
-) -> tuple[xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray]:
-    """Calculate half-transducer pulse-compressed signals.
-
-    Equivalent to CRIMAC ``calcTransducerHalves``.
-    """
-    pc_fore = 0.5 * (pc.isel(beam=2) + pc.isel(beam=3))
-    pc_aft = 0.5 * (pc.isel(beam=0) + pc.isel(beam=1))
-    pc_star = 0.5 * (pc.isel(beam=0) + pc.isel(beam=3))
-    pc_port = 0.5 * (pc.isel(beam=1) + pc.isel(beam=2))
-
-    return pc_fore, pc_aft, pc_star, pc_port
-
-
 def _compute_svf_power(
     normalized_spectrum: np.ndarray,
     n_beams: int,

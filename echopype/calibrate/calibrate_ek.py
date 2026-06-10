@@ -788,18 +788,6 @@ class CalibrateEK80(CalibrateEK):
             self.vend["gain"].sel(cal_channel_id=channel).values,
         )
 
-        angle_offset_alongship = np.interp(
-            frequency,
-            self.vend["cal_frequency"].values,
-            self.vend["angle_offset_alongship"].sel(cal_channel_id=channel).values,
-        )
-
-        angle_offset_athwartship = np.interp(
-            frequency,
-            self.vend["cal_frequency"].values,
-            self.vend["angle_offset_athwartship"].sel(cal_channel_id=channel).values,
-        )
-
         beamwidth_alongship = np.interp(
             frequency,
             self.vend["cal_frequency"].values,
@@ -812,9 +800,17 @@ class CalibrateEK80(CalibrateEK):
             self.vend["beamwidth_athwartship"].sel(cal_channel_id=channel).values,
         )
 
-        fac_along = (np.abs(theta - angle_offset_alongship) / (beamwidth_alongship / 2)) ** 2
-
-        fac_athwart = (np.abs(phi - angle_offset_athwartship) / (beamwidth_athwartship / 2)) ** 2
+        # NOTE:
+        # theta and phi are expected to be offset-corrected split-beam angles
+        # (e.g. from get_angle_complex_samples() / add_splitbeam_angle()).
+        # Therefore angle offsets are not applied here again.
+        #
+        # This differs from the CRIMAC reference implementation, where the
+        # angles returned by calcAngles() do not include the angle-offset
+        # correction. Applying the offset correction to the CRIMAC angles
+        # yields close agreement with the echopype convention.
+        fac_along = (np.abs(theta) / (beamwidth_alongship / 2)) ** 2
+        fac_athwart = (np.abs(phi) / (beamwidth_athwartship / 2)) ** 2
 
         beam_correction_db = (
             0.5 * 6.0206 * (fac_along + fac_athwart - 0.18 * fac_along * fac_athwart)
