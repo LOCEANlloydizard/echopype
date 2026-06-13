@@ -36,7 +36,7 @@ if os.getenv("USE_POOCH") == "True" and os.getenv("PYTEST_XDIST_WORKER") is None
         "ek80_bb_complex_multiplex.zip", "ek80_bb_with_calibration.zip",
         "ek80_duplicate_ping_times.zip", "ek80_ext.zip", "ek80_invalid_env_datagrams.zip",
         "ek80_missing_sound_velocity_profile.zip", "ek80_new.zip", "ek80_sequence.zip",
-        "es60.zip", "es70.zip", "es80.zip", "legacy_datatree.zip", "ts_spectrum_example_data.zip",
+        "es60.zip", "es70.zip", "es80.zip", "legacy_datatree.zip", "resample_to_geometry_example_data.zip", "ts_spectrum_example_data.zip",
     ]
 
     # v0.11.1a2 checksums (GitHub release assets)
@@ -62,6 +62,7 @@ if os.getenv("USE_POOCH") == "True" and os.getenv("PYTEST_XDIST_WORKER") is None
         "es70.zip": "sha256:a6b4f27f33f09bace26264de6984fdb4111a3a0337bc350c3c1d25c8b3effc7c",
         "es80.zip": "sha256:b37ee01462f46efe055702c20be67d2b8c6b786844b183b16ffc249c7c5ec704",
         "legacy_datatree.zip": "sha256:820cd252047dbf35fa5fb04a9aafee7f7659e0fe4f7d421d69901c57deb6c9d5",  # noqa: E501
+        "resample_to_geometry_example_data.zip": "sha256:1a45e3ac31ef16d742b16155dc4b7f62511abd8d25547f55fcd9146446f60d07",
         "ts_spectrum_example_data.zip": "sha256:a35a1108dcfafae725d826ffa23ea2e111fdb420e7ce433e49e1797381bb6763",
     }
 
@@ -180,6 +181,7 @@ def test_path():
         "EK80_MULTI": TEST_DATA_FOLDER / "ek80_bb_complex_multiplex",
         "ECS": TEST_DATA_FOLDER / "ecs",
         "LEGACY_DATATREE": TEST_DATA_FOLDER / "legacy_datatree",
+        "RESAMPLE_GEOMETRY": TEST_DATA_FOLDER / "resample_to_geometry_example_data",
         "TS_SPECTRUM_EXAMPLE": TEST_DATA_FOLDER / "ts_spectrum_example_data",
     }
 
