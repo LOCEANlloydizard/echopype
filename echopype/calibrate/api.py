@@ -179,6 +179,8 @@ def _compute_cal(
                         if "filter_time" in cal_ds_iteration:
                             cal_ds_iteration = cal_ds_iteration.drop_vars("filter_time")
 
+                        cal_ds_list.append(cal_ds_iteration)
+
                 # # Alternative?
                 # for channel in echodata[ed_beam_group]["channel"].values:
                 #     # get all filter_time for this channel
