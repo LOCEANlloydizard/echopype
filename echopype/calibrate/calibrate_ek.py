@@ -1192,8 +1192,8 @@ class CalibrateEK80(CalibrateEK):
             ds_cal = self._cal_complex_samples_f(cal_type=cal_type, **kwargs)
         elif flag_complex:
             # Complex-sample calibration: BB/FM data are pulse-compressed and
-            # averaged over transducer sectors before computing conventional
-            # Sv/Sp/legacy gridded TS. CW complex data are calibrated directly
+            # averaged over transducer sectors before computing
+            # Sv/Sp/band-averaged gridded TS. CW complex data are calibrated directly
             # from complex samples.
             ds_cal = self._cal_complex_samples(cal_type=cal_type)
         else:
