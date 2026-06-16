@@ -554,6 +554,6 @@ def compute_TS_spectrum(echodata: EchoData, **kwargs) -> xr.Dataset:
     Returns
     -------
     xr.Dataset
-        Dataset containing frequency-dependent target strength, TS(f).
+        Dataset containing beam-compensated frequency-dependent target strength, TS(f).
     """
     return _compute_cal(cal_type="TS_spectrum", echodata=echodata, **kwargs)

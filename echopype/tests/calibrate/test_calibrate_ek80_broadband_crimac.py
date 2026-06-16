@@ -55,7 +55,7 @@ def _target_locations_from_crimac(ed, ref, channel, ping_index):
 def test_compute_sp_fm_complex_runs(ts_echodata):
     ds = ep.calibrate.compute_Sp(
         ts_echodata,
-        waveform_mode="BB",
+        waveform_mode="FM",
         encode_mode="complex",
     )
 
@@ -67,7 +67,7 @@ def test_compute_sp_fm_complex_runs(ts_echodata):
 def test_frequency_dependent_absorption_matches_crimac(ts_echodata, ts_ref):
     cal_obj = ep.calibrate.calibrate_ek.CalibrateEK80(
         echodata=ts_echodata,
-        waveform_mode="BB",
+        waveform_mode="FM",
         encode_mode="complex",
         env_params=None,
         cal_params=None,
@@ -100,7 +100,7 @@ def test_compute_ts_spectrum_matches_crimac(ts_echodata, ts_ref):
 
     ds = ep.calibrate.compute_TS_spectrum(
         ts_echodata,
-        waveform_mode="BB",
+        waveform_mode="FM",
         encode_mode="complex",
         point_locations=point_locations,
         n_f_points=ts_ref["f_m"].size,
@@ -128,3 +128,45 @@ def test_compute_Sv_spectrum_not_implemented(ts_echodata):
             waveform_mode="FM",
             encode_mode="complex",
         )
+        
+@pytest.mark.parametrize("window", [None, "boxcar", "hann", "hamming", ("tukey", 0.25)])
+def test_compute_ts_spectrum_accepts_scipy_windows(ts_echodata, ts_ref, window):
+    point_locations = _target_locations_from_crimac(
+        ed=ts_echodata,
+        ref=ts_ref,
+        channel=CRIMAC_CHANNEL,
+        ping_index=CRIMAC_PING_INDEX,
+    )
+
+    ds = ep.calibrate.compute_TS_spectrum(
+        ts_echodata,
+        waveform_mode="FM",
+        encode_mode="complex",
+        point_locations=point_locations,
+        n_f_points=ts_ref["f_m"].size,
+        window=window,
+    )
+
+    assert "TS_spectrum" in ds
+    assert np.isfinite(ds["TS_spectrum"]).any()
+    
+def test_compute_ts_spectrum_none_window_matches_boxcar(ts_echodata, ts_ref):
+    point_locations = _target_locations_from_crimac(
+        ed=ts_echodata,
+        ref=ts_ref,
+        channel=CRIMAC_CHANNEL,
+        ping_index=CRIMAC_PING_INDEX,
+    )
+
+    kwargs = dict(
+        echodata=ts_echodata,
+        waveform_mode="FM",
+        encode_mode="complex",
+        point_locations=point_locations,
+        n_f_points=ts_ref["f_m"].size,
+    )
+
+    ds_none = ep.calibrate.compute_TS_spectrum(**kwargs, window=None)
+    ds_boxcar = ep.calibrate.compute_TS_spectrum(**kwargs, window="boxcar")
+
+    xr.testing.assert_allclose(ds_none["TS_spectrum"], ds_boxcar["TS_spectrum"])
