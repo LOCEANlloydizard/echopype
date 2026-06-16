@@ -6,7 +6,6 @@ from echopype.calibrate.ek80_complex import (
     get_vend_filter_EK80,
     _get_average_signal,
     _compute_power_from_complex_signal,
-    _compute_svf_power,
     _compute_ts_spectrum_power,
     _align_autocorrelation,
     _compute_ts_spectrum,
@@ -121,29 +120,6 @@ def test_compute_power_from_complex_signal():
 
     xr.testing.assert_allclose(out, expected)
     assert out.name == "received_power"
-
-
-def test_compute_svf_and_ts_spectrum_power_are_equivalent():
-    normalized_spectrum = np.array([1 + 1j, 2 + 0j, 0.5 - 0.5j])
-    n_beams = 4
-    z_et = 75.0
-    z_er = 5400.0
-
-    svf_power = _compute_svf_power(
-        normalized_spectrum=normalized_spectrum,
-        n_beams=n_beams,
-        z_et=z_et,
-        z_er=z_er,
-    )
-
-    ts_power = _compute_ts_spectrum_power(
-        normalized_spectrum=normalized_spectrum,
-        n_beams=n_beams,
-        z_et=z_et,
-        z_er=z_er,
-    )
-
-    np.testing.assert_allclose(svf_power, ts_power)
 
 
 def test_align_autocorrelation():

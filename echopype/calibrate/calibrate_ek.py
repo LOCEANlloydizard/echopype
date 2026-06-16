@@ -768,7 +768,6 @@ class CalibrateEK80(CalibrateEK):
     ):
         """Compute empirical split-beam beam correction in dB."""
         fac_along = (np.abs(theta - angle_offset_alongship) / (beamwidth_alongship / 2)) ** 2
-
         fac_athwart = (np.abs(phi - angle_offset_athwartship) / (beamwidth_athwartship / 2)) ** 2
 
         return 0.5 * 6.0206 * (fac_along + fac_athwart - 0.18 * fac_along * fac_athwart)
