@@ -446,15 +446,27 @@ def test_check_echodata_backscatter_size(
 
 @pytest.mark.integration
 def test_fm_equals_bb(ek80_path):
-    """Check that waveform_mode='BB' and waveform_mode='FM' result in the same Sv/TS."""
-    # Open Raw and Compute both Sv and both TS
-    ed = ep.open_raw(ek80_path / "D20170912-T234910.raw", sonar_model = "EK80")
-    ds_Sv_bb = ep.calibrate.compute_Sv(ed, waveform_mode="BB", encode_mode="complex")
-    ds_Sv_fm = ep.calibrate.compute_Sv(ed, waveform_mode="FM", encode_mode="complex")
-    ds_TS_bb = ep.calibrate.compute_TS(ed, waveform_mode="BB", encode_mode="complex")
-    ds_TS_fm = ep.calibrate.compute_TS(ed, waveform_mode="FM", encode_mode="complex")
+    """Check that waveform_mode='BB' and waveform_mode='FM' produce identical Sv and TS."""
+    ed = ep.open_raw(ek80_path / "D20170912-T234910.raw", sonar_model="EK80")
 
-    # Check that they are equal
+    with pytest.deprecated_call(match="'BB' is deprecated"):
+        ds_Sv_bb = ep.calibrate.compute_Sv(
+            ed, waveform_mode="BB", encode_mode="complex"
+        )
+
+    ds_Sv_fm = ep.calibrate.compute_Sv(
+        ed, waveform_mode="FM", encode_mode="complex"
+    )
+
+    with pytest.deprecated_call(match="'BB' is deprecated"):
+        ds_TS_bb = ep.calibrate.compute_TS(
+            ed, waveform_mode="BB", encode_mode="complex"
+        )
+
+    ds_TS_fm = ep.calibrate.compute_TS(
+        ed, waveform_mode="FM", encode_mode="complex"
+    )
+
     assert ds_Sv_bb.equals(ds_Sv_fm)
     assert ds_TS_bb.equals(ds_TS_fm)
 

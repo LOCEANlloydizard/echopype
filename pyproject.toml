@@ -53,7 +53,6 @@ dependencies = [
     "typing-extensions",
     "xarray>=2026.01.0",
     "zarr>=3",
-    "tqdm",
 ]
 
 [project.urls]

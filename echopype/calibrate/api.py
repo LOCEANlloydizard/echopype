@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 import xarray as xr
 
@@ -32,8 +34,18 @@ def _compute_cal(
     drop_last_hanning_zero=False,
     **kwargs,
 ):
-    # Make waveform_mode "FM" equivalent to "BB"
-    waveform_mode = "BB" if waveform_mode == "FM" else waveform_mode
+    # Make waveform_mode "FM" equivalent to "BB".
+    # Accept legacy "BB" for backward compatibility.
+    # Ref: https://github.com/echostack-org/echopype/issues/1651
+    if waveform_mode == "BB":
+        warnings.warn(
+            "'BB' is deprecated and will be removed in a future release. "
+            "Please use 'FM' instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+    waveform_mode = "BB" if waveform_mode in ("FM", "BB") else waveform_mode
 
     # TODO: consolidate the below block with simrad.py::check_input_args_combination()
     # Check on waveform_mode, encode_mode inputs, and assumption on single filter time

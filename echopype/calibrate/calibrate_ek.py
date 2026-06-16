@@ -3,7 +3,6 @@ from typing import Dict
 import numpy as np
 import xarray as xr
 from scipy.signal import get_window
-from tqdm.auto import tqdm
 
 from ..echodata import EchoData
 from ..echodata.simrad import retrieve_correct_beam_group
@@ -889,7 +888,7 @@ class CalibrateEK80(CalibrateEK):
             target_id_list = []
             frequency_ref = None
 
-            for point_idx in tqdm(range(points_ch.sizes["target_id"]), desc=f"{channel}"):
+            for point_idx in range(points_ch.sizes["target_id"]):
                 point_ping_time = points_ch["ping_time"].isel(target_id=point_idx).values
                 target_range = float(points_ch["target_range"].isel(target_id=point_idx))
 
@@ -1115,7 +1114,8 @@ class CalibrateEK80(CalibrateEK):
         split_front: float = 0.25,
         window: str | None = None,
     ) -> xr.Dataset:
-        """Calibrate EK80 FM complex data to frequency-dependent Sv(f) or TS(f)."""
+        """Calibrate EK80 FM complex data to frequency-dependent TS(f)."""
+
         if self.waveform_mode not in ("FM", "BB") or self.encode_mode != "complex":
             raise ValueError(f"{cal_type} is only supported for EK80 FM complex data.")
 
@@ -1166,7 +1166,7 @@ class CalibrateEK80(CalibrateEK):
         standard calibration equation is used.
 
         3. Frequency-dependent complex-sample calibration:
-        Used for EK80 BB/FM complex data when computing Sv(f) or TS(f).
+        Used for EK80 FM complex data when computing TS(f).
         This path keeps the pulse-compressed signal before final calibration
         so that FFT-based spectral processing can be applied.
 
@@ -1236,9 +1236,9 @@ class CalibrateEK80(CalibrateEK):
         """
         For CW split-beam data, TS is computed from Sp with beam compensation
         using split-beam angle information. For EK80 broadband/FM complex data,
-        this function returns a band-averaged, center-frequency beam-compensated TS
-        product after pulse compression. For frequency-dependent target spectra,
-        use ``compute_TS_spectrum``.
+        this function returns a band-averaged, center-frequency beam-compensated
+        TS product after pulse compression. For frequency-dependent target
+        strength spectra, use ``compute_TS_spectrum()``.
 
         Returns
         -------
@@ -1257,7 +1257,7 @@ class CalibrateEK80(CalibrateEK):
         window: str = None,
         frequency_resolution: float | None = None,
     ):
-        """Compute frequency-dependent target strength TS(f).
+        """Compute frequency-dependent target strength spectrum TS(f).
 
         Returns
         -------
