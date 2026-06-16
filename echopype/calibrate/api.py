@@ -228,12 +228,6 @@ def _compute_cal(
                 "units": "m",
             }
 
-        if "svf_range" in ds:
-            ds["svf_range"].attrs = {
-                "long_name": "Range distance for Sv(f)/TS(f) window centres",
-                "units": "m",
-            }
-
         if "frequency" in ds:
             ds["frequency"].attrs = {
                 "long_name": "Frequency",
