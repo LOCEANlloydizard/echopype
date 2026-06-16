@@ -540,8 +540,11 @@ def compute_TS_spectrum(echodata: EchoData, **kwargs) -> xr.Dataset:
         ``frequency_resolution`` is not provided.
 
     split_front : float, default 0.25
-        Fraction of the FFT window placed before the target location when only
-        ``target_range`` is provided.
+        Each echo spectrum is computed from a segment of the complex echo signal.
+        This parameter specifies how to position that segment around the target location
+        when only ``target_range`` is provided. For example, if ``split_front=0.25``,
+        then 25% of the NFFT window is placed before ``target_range`` and the remaining
+        75% after it.
 
     window : str, tuple, float or None, default None
         Window passed directly to ``scipy.signal.get_window``. If ``None``,

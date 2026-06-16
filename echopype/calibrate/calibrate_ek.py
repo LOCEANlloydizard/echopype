@@ -958,10 +958,22 @@ class CalibrateEK80(CalibrateEK):
                     sound_speed=sound_speed,
                 )
 
-                target_range_min = float(points_ch["target_range_min"].isel(target_id=point_idx))
-                target_range_max = float(points_ch["target_range_max"].isel(target_id=point_idx))
-
-                target_mask = (range_1d >= target_range_min) & (range_1d <= target_range_max)
+                if {"target_range_min", "target_range_max"}.issubset(points_ch.data_vars):
+                    target_range_min = float(
+                        points_ch["target_range_min"].isel(target_id=point_idx)
+                    )
+                    target_range_max = float(
+                        points_ch["target_range_max"].isel(target_id=point_idx)
+                    )
+                    target_mask = (range_1d >= target_range_min) & (range_1d <= target_range_max)
+                else:  # splitfront is added
+                    idx_target = int(np.nanargmin(np.abs(range_1d - target_range)))
+                    n_before = int(np.floor(split_front * n_fft))
+                    n_after = n_fft - n_before
+                    idx_start = max(0, idx_target - n_before)
+                    idx_stop = min(range_1d.size, idx_target + n_after)
+                    target_mask = np.zeros(range_1d.size, dtype=bool)
+                    target_mask[idx_start:idx_stop] = True
 
                 if not np.any(target_mask):
                     continue

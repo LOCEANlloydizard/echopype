@@ -67,7 +67,7 @@ def test_compute_sp_fm_complex_runs(ts_echodata):
 def test_frequency_dependent_absorption_matches_crimac(ts_echodata, ts_ref):
     cal_obj = ep.calibrate.calibrate_ek.CalibrateEK80(
         echodata=ts_echodata,
-        waveform_mode="FM",
+        waveform_mode="BB", #TODO change to FM after deprecation of BB
         encode_mode="complex",
         env_params=None,
         cal_params=None,
@@ -170,3 +170,50 @@ def test_compute_ts_spectrum_none_window_matches_boxcar(ts_echodata, ts_ref):
     ds_boxcar = ep.calibrate.compute_TS_spectrum(**kwargs, window="boxcar")
 
     xr.testing.assert_allclose(ds_none["TS_spectrum"], ds_boxcar["TS_spectrum"])
+    
+    
+def test_compute_ts_spectrum_explicit_range_ignores_split_front(ts_echodata, ts_ref):
+    point_locations = _target_locations_from_crimac(
+        ed=ts_echodata,
+        ref=ts_ref,
+        channel=CRIMAC_CHANNEL,
+        ping_index=CRIMAC_PING_INDEX,
+    )
+
+    kwargs = dict(
+        echodata=ts_echodata,
+        waveform_mode="FM",
+        encode_mode="complex",
+        point_locations=point_locations,
+        n_f_points=ts_ref["f_m"].size,
+    )
+
+    ds_025 = ep.calibrate.compute_TS_spectrum(**kwargs, split_front=0.25)
+    ds_075 = ep.calibrate.compute_TS_spectrum(**kwargs, split_front=0.75)
+
+    xr.testing.assert_allclose(ds_025["TS_spectrum"], ds_075["TS_spectrum"])
+    
+def test_compute_ts_spectrum_target_range_only_uses_split_front(ts_echodata, ts_ref):
+    point_locations = _target_locations_from_crimac(
+        ed=ts_echodata,
+        ref=ts_ref,
+        channel=CRIMAC_CHANNEL,
+        ping_index=CRIMAC_PING_INDEX,
+    ).drop_vars(["target_range_min", "target_range_max"])
+
+    kwargs = dict(
+        echodata=ts_echodata,
+        waveform_mode="FM",
+        encode_mode="complex",
+        point_locations=point_locations,
+        n_f_points=ts_ref["f_m"].size,
+    )
+
+    ds_025 = ep.calibrate.compute_TS_spectrum(**kwargs, split_front=0.25)
+    ds_075 = ep.calibrate.compute_TS_spectrum(**kwargs, split_front=0.75)
+
+    assert not np.allclose(
+        ds_025["TS_spectrum"].values,
+        ds_075["TS_spectrum"].values,
+        equal_nan=True,
+    )
