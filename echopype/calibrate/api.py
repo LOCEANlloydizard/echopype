@@ -82,10 +82,10 @@ def _compute_cal(
         cal_obj._check_echodata_backscatter_size()
 
         compute_methods = {
-            "Sv": "compute_Sv",
             "Sp": "compute_Sp",
             "TS": "compute_TS",
-            "Sv_f": "compute_Sv_f",
+            "Sv": "compute_Sv",
+            # add Sp_spectrum??
             "TS_spectrum": "compute_TS_spectrum",
         }
 
@@ -176,7 +176,8 @@ def _compute_cal(
 
                         # Calibrate and drop filter_time
                         cal_ds_iteration = _compute_cal_ds(echodata, slice_dict)
-                        cal_ds_list.append(cal_ds_iteration.drop_vars("filter_time"))
+                        if "filter_time" in cal_ds_iteration:
+                            cal_ds_iteration = cal_ds_iteration.drop_vars("filter_time")
 
                 # # Alternative?
                 # for channel in echodata[ed_beam_group]["channel"].values:
@@ -239,10 +240,9 @@ def _compute_cal(
 
         ds[cal_type].attrs = {
             "long_name": {
-                "Sv": "Volume backscattering strength (Sv re 1 m-1)",
                 "Sp": "Point scattering strength (Sp re 1 m^2)",
                 "TS": "Target strength (TS re 1 m^2)",
-                "Sv_f": "Frequency-dependent volume backscattering strength (Sv(f) re 1 m-1)",
+                "Sv": "Volume backscattering strength (Sv re 1 m-1)",
                 "TS_spectrum": "Frequency-dependent target strength spectrum (TS(f) re 1 m^2)",
             }[cal_type],
             "units": "dB",
@@ -382,13 +382,16 @@ def compute_Sv(echodata: EchoData, **kwargs) -> xr.Dataset:
     return _compute_cal(cal_type="Sv", echodata=echodata, **kwargs)
 
 
-def compute_Sv_f(echodata: EchoData, **kwargs) -> xr.Dataset:
+def compute_Sv_spectrum(echodata: EchoData, **kwargs) -> xr.Dataset:
     """
     Compute frequency-dependent volume backscattering strength Sv(f)
     from broadband EK80 complex data.
-    TODO: add more details here when the function is fully implemented
+
+    Notes
+    -----
+    This functionality is not yet implemented.
     """
-    return _compute_cal(cal_type="Sv_f", echodata=echodata, **kwargs)
+    raise NotImplementedError("compute_Sv_spectrum is not yet implemented.")
 
 
 def compute_Sp(echodata: EchoData, **kwargs) -> xr.Dataset:
@@ -508,7 +511,41 @@ def compute_TS(echodata: EchoData, **kwargs):
 
 def compute_TS_spectrum(echodata: EchoData, **kwargs) -> xr.Dataset:
     """
-    Compute broadband frequency-dependent target strength spectrum.
-    TODO: add more details here when the function is fully implemented
+    Compute broadband frequency-dependent target strength spectrum, TS(f),
+    from EK80 broadband/FM complex data.
+
+    Parameters
+    ----------
+    point_locations : xr.Dataset
+        Locations of targets for which TS(f) should be computed.
+        Must contain ``channel``, ``ping_time``, and ``target_range`` for each
+        ``target_id``. If ``target_range_min`` and ``target_range_max`` are
+        provided, they define the target echo segment. Otherwise, the segment
+        is built around ``target_range`` using ``NFFT`` and ``split_front``.
+
+    NFFT : int, optional
+        Number of FFT points used to compute the target spectrum. If not
+        provided, a value is inferred from the output frequency grid.
+
+    n_f_points : int, optional
+        Number of frequency points in the output TS(f) spectrum. Used when
+        ``frequency_resolution`` is not provided.
+
+    split_front : float, default 0.25
+        Fraction of the FFT window placed before the target location when only
+        ``target_range`` is provided.
+
+    window : str, tuple, float or None, default None
+        Window passed directly to ``scipy.signal.get_window``. If ``None``,
+        a rectangular/boxcar window is used.
+
+    frequency_resolution : float, optional
+        Desired spacing of the output frequency grid in Hz. Used to define the
+        frequency grid on which TS(f) is evaluated.
+
+    Returns
+    -------
+    xr.Dataset
+        Dataset containing frequency-dependent target strength, TS(f).
     """
     return _compute_cal(cal_type="TS_spectrum", echodata=echodata, **kwargs)
