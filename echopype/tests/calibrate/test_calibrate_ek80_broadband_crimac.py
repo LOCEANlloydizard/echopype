@@ -117,17 +117,14 @@ def test_compute_ts_spectrum_matches_crimac(ts_echodata, ts_ref):
     np.testing.assert_allclose(ts, ts_ref["TS_m"], atol=0.5, rtol=0.0)
 
 
-def test_compute_svf_fm_complex_runs(ts_echodata):
-    ds = ep.calibrate.compute_Sv_f(
-        ts_echodata,
-        waveform_mode="FM",
-        encode_mode="complex",
-        frequency_resolution=1000,
-        range_step=0.5,
-    )
-
-    assert "Sv_f" in ds
-    assert set(("channel", "ping_time", "svf_range", "frequency")).issubset(
-        ds["Sv_f"].dims
-    )
-    assert np.isfinite(ds["Sv_f"]).any()
+def test_compute_Sv_spectrum_not_implemented(ts_echodata):
+    """
+    Test that compute_Sv_spectrum raises NotImplementedError
+    for EK80 broadband complex data, since this is not currently implemented.
+    """
+    with pytest.raises(NotImplementedError):
+        ep.calibrate.compute_Sv_spectrum(
+            ts_echodata,
+            waveform_mode="FM",
+            encode_mode="complex",
+        )
