@@ -36,7 +36,8 @@ if os.getenv("USE_POOCH") == "True" and os.getenv("PYTEST_XDIST_WORKER") is None
         "ek80_bb_complex_multiplex.zip", "ek80_bb_with_calibration.zip",
         "ek80_duplicate_ping_times.zip", "ek80_ext.zip", "ek80_invalid_env_datagrams.zip",
         "ek80_missing_sound_velocity_profile.zip", "ek80_new.zip", "ek80_sequence.zip",
-        "es60.zip", "es70.zip", "es80.zip", "legacy_datatree.zip", "resample_to_geometry_example_data.zip", "ts_spectrum_example_data.zip",
+        "es60.zip", "es70.zip", "es80.zip", "legacy_datatree.zip", "resample_to_geometry_example_data.zip",
+        "ts_spectrum_example_data.zip",
     ]
 
     # v0.11.1a2 checksums (GitHub release assets)
