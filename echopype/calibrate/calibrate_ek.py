@@ -563,8 +563,10 @@ class CalibrateEK80(CalibrateEK):
         Parameters
         ----------
         cal_type : str
-            'Sv' for calculating volume backscattering strength, or
-            'TS' for calculating target strength
+            'Sv' for volume backscattering strength, 'Sp' for point scattering
+            strength, or 'TS' for beam-compensated target strength. For BB/FM
+            complex data, TS is a band-averaged, center-frequency approximation;
+            use compute_TS_spectrum for frequency-dependent TS(f).
 
         Returns
         -------
@@ -654,7 +656,6 @@ class CalibrateEK80(CalibrateEK):
 
             out.name = "Sv"
             # out = out.rename_vars({list(out.data_vars.keys())[0]: "Sv"})
-        # remove TS below and create a TS that build on Sp
         elif cal_type in ("Sp", "TS"):
             range_safe = self._safe_range_for_log(range_meter)
             spreading_loss_safe = 20 * np.log10(range_safe)
@@ -666,27 +667,29 @@ class CalibrateEK80(CalibrateEK):
                 - 10 * np.log10(wavelength**2 * transmit_power / (16 * np.pi**2))
                 - 2 * gain
             )
-            if cal_type == "TS" and self.waveform_mode == "CW":
-                bs = self.beam["backscatter_r"] + 1j * self.beam["backscatter_i"]
+
+            if cal_type == "TS":
+                # For BB/FM, use pulse-compressed sector signals for split-beam angles.
+                # For CW complex, use the recorded complex sector signals directly.
+                signal_for_angles = (
+                    _get_pulse_compressed_signal(beam=self.beam, matched_filter=tx)
+                    if self.waveform_mode == "BB"
+                    else self.beam["backscatter_r"] + 1j * self.beam["backscatter_i"]
+                )
 
                 angle_alongship, angle_athwartship = _get_splitbeam_angles(
-                    pc=bs,
+                    pc=signal_for_angles,
                     gamma_alongship=self.cal_params["angle_sensitivity_alongship"],
                     gamma_athwartship=self.cal_params["angle_sensitivity_athwartship"],
                 )
 
-                angle_offset_alongship = self.cal_params["angle_offset_alongship"]
-                angle_offset_athwartship = self.cal_params["angle_offset_athwartship"]
-                beamwidth_alongship = self.cal_params["beamwidth_alongship"]
-                beamwidth_athwartship = self.cal_params["beamwidth_athwartship"]
-
                 beam_correction_db = self._get_beam_correction(
                     theta=angle_alongship,
                     phi=angle_athwartship,
-                    angle_offset_alongship=angle_offset_alongship,
-                    angle_offset_athwartship=angle_offset_athwartship,
-                    beamwidth_alongship=beamwidth_alongship,
-                    beamwidth_athwartship=beamwidth_athwartship,
+                    angle_offset_alongship=self.cal_params["angle_offset_alongship"],
+                    angle_offset_athwartship=self.cal_params["angle_offset_athwartship"],
+                    beamwidth_alongship=self.cal_params["beamwidth_alongship"],
+                    beamwidth_athwartship=self.cal_params["beamwidth_athwartship"],
                 )
 
                 out = sp + beam_correction_db
@@ -1158,7 +1161,7 @@ class CalibrateEK80(CalibrateEK):
         2. Complex-sample calibration:
         Used for EK80 complex data in CW or BB/FM mode. For BB/FM data,
         this path computes the conventional broadband-averaged Sv, Sp, or
-        legacy TS-like gridded product: pulse compression is applied,
+        band-averaged gridded TS product: pulse compression is applied,
         transducer sectors are averaged, received power is computed, and the
         standard calibration equation is used.
 
@@ -1233,9 +1236,9 @@ class CalibrateEK80(CalibrateEK):
         """
         For CW split-beam data, TS is computed from Sp with beam compensation
         using split-beam angle information. For EK80 broadband/FM complex data,
-        this function returns a band-averaged gridded product after pulse
-        compression. For frequency-dependent target spectra at specified target
-        locations, use ``compute_TS_spectrum``.
+        this function returns a band-averaged, center-frequency beam-compensated TS
+        product after pulse compression. For frequency-dependent target spectra,
+        use ``compute_TS_spectrum``.
 
         Returns
         -------
