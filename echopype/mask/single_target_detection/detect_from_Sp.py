@@ -418,7 +418,7 @@ def _pack_targets(feats: xr.Dataset, ds_m2: xr.Dataset) -> xr.Dataset:
                 angle_minor_deg=("target", np.array([], dtype=np.float64)),
             ),
             coords=dict(target=np.arange(0, dtype=np.int64)),
-            attrs=dict(method="echoview_split_method2"),
+            attrs=dict(method="from_Sp"),
         )
 
     it = feats["ping_index"].values.astype(np.int64)
@@ -460,11 +460,10 @@ def _pack_targets(feats: xr.Dataset, ds_m2: xr.Dataset) -> xr.Dataset:
 # ##
 # Public API
 # ##
-
-
-def detect_echoview_split_method2(ds_m2: xr.Dataset, params: dict) -> xr.Dataset:
+def detect_from_Sp(ds_m2: xr.Dataset, params: dict) -> xr.Dataset:
     """
-    Echoview split-beam single-target detection (Method 2) port.
+    Single-target detection from point scattering strength (Sp).
+    Current implementation follows the Echoview Method 2 workflow.
 
     Implements in python the EV Method 2 workflow on precomputed TS (dB) and split-beam angles:
     (i) compute Plike from TS + range + absorption, (ii) find local Plike maxima and build

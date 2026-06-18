@@ -14,12 +14,10 @@ from flox.xarray import xarray_reduce
 # for seafloor detection
 from echopype.mask.seafloor_detection.bottom_basic import bottom_basic
 from echopype.mask.seafloor_detection.bottom_blackwell import bottom_blackwell
+from echopype.mask.single_target_detection.detect_from_Sp import detect_from_Sp
 
 # for single_target_detection
-from echopype.mask.single_target_detection.detect_echoview_split_method2 import (
-    detect_echoview_split_method2,
-)
-from echopype.mask.single_target_detection.detect_matecho import detect_matecho
+from echopype.mask.single_target_detection.detect_from_Sv import detect_from_Sv
 
 from ..commongrid.utils import (
     _convert_bins_to_interval_index,
@@ -1004,8 +1002,8 @@ def detect_shoal(
 
 # Registry of supported methods for single_target_detection
 METHODS_SINGLE_TARGET = {
-    "matecho": detect_matecho,
-    "echoview_split_method2": detect_echoview_split_method2,
+    "from_Sv": detect_from_Sv,
+    "from_Sp": detect_from_Sp,
 }
 
 

@@ -843,10 +843,10 @@ def _build_outputs_from_refined(
     return out
 
 
-# main
-
-
-def detect_matecho(
+# ##
+# Public API
+# ##
+def detect_from_Sv(
     ds: xr.Dataset,
     params: dict,
 ) -> xr.Dataset:
