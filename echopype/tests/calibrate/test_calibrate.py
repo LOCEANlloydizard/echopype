@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 from scipy.io import loadmat
 import echopype as ep
-from echopype.calibrate.env_params_old import EnvParams
+from echopype.calibrate.env_params_old import EnvParams  # noqa: F401
 from echopype.calibrate.cal_params import get_vend_cal_params_power
 import xarray as xr
 import dask.array as da
@@ -101,7 +101,7 @@ def test_compute_Sv_ek60_matlab(ek60_path):
 
     # Calibrate to get Sv
     ds_Sv = ep.calibrate.compute_Sv(echodata)
-    ds_TS = ep.calibrate.compute_TS(echodata)
+    ds_Sp = ep.calibrate.compute_Sp(echodata)
 
     # Load matlab outputs and test
 
@@ -117,10 +117,10 @@ def test_compute_Sv_ek60_matlab(ek60_path):
             assert np.allclose(pyel_vals, ep_vals)
 
     # Check Sv
-    check_output(ds_Sv['Sv'], 'Sv')
+    check_output(ds_Sv["Sv"], "Sv")
 
-    # Check TS
-    check_output(ds_TS['TS'], 'Sp')
+    # Check Sp
+    check_output(ds_Sp["Sp"], "Sp")
 
 
 @pytest.mark.integration
@@ -137,10 +137,10 @@ def test_compute_Sv_ek60_duplicated_freq(ek60_path):
 
     # Calibrate to get Sv
     ds_Sv = ep.calibrate.compute_Sv(echodata)
-    ds_TS = ep.calibrate.compute_TS(echodata)
+    ds_Sp = ep.calibrate.compute_Sp(echodata)
 
     assert isinstance(ds_Sv, xr.Dataset)
-    assert isinstance(ds_TS, xr.Dataset)
+    assert isinstance(ds_Sp, xr.Dataset)
 
 
 @pytest.mark.integration
@@ -262,12 +262,12 @@ def test_compute_Sv_ek80_CW_complex_BB_complex(ek80_cal_path, ek80_path):
     Tests calibration for file containing both BB and CW mode data
     with both encoded as complex samples.
     """
-    ek80_raw_path = ek80_cal_path / "2018115-D20181213-T094600.raw"  # rx impedance / rx fs / tcvr type
+    ek80_raw_path = ek80_cal_path / "2018115-D20181213-T094600.raw"  # rx impedance / rx fs / tcvr type  # noqa: E501
     # ek80_raw_path = ek80_path / "D20170912-T234910.raw"  # rx impedance / rx fs / tcvr type
-    # ek80_raw_path = ek80_path / "Summer2018--D20180905-T033113.raw"  # BB only, rx impedance / rx fs / tcvr type
-    # ek80_raw_path = ek80_path / "ar2.0-D20201210-T000409.raw"  # CW only, rx impedance / rx fs / tcvr type
-    # ek80_raw_path = ek80_path / "saildrone/SD2019_WCS_v05-Phase0-D20190617-T125959-0.raw"  # rx impedance / tcvr type
-    # ek80_raw_path = ek80_path / "D20200528-T125932.raw"  # CW only,  WBT MINI, rx impedance / rx fs / tcvr type
+    # ek80_raw_path = ek80_path / "Summer2018--D20180905-T033113.raw"  # BB only, rx impedance / rx fs / tcvr type  # noqa: E501
+    # ek80_raw_path = ek80_path / "ar2.0-D20201210-T000409.raw"  # CW only, rx impedance / rx fs / tcvr type  # noqa: E501
+    # ek80_raw_path = ek80_path / "saildrone/SD2019_WCS_v05-Phase0-D20190617-T125959-0.raw"  # rx impedance / tcvr type  # noqa: E501
+    # ek80_raw_path = ek80_path / "D20200528-T125932.raw"  # CW only,  WBT MINI, rx impedance / rx fs / tcvr type  # noqa: E501
     ed = ep.open_raw(ek80_raw_path, sonar_model="EK80")
     # ds_Sv = ep.calibrate.compute_Sv(
     #     ed, waveform_mode="CW", encode_mode="complex"
@@ -446,15 +446,27 @@ def test_check_echodata_backscatter_size(
 
 @pytest.mark.integration
 def test_fm_equals_bb(ek80_path):
-    """Check that waveform_mode='BB' and waveform_mode='FM' result in the same Sv/TS."""
-    # Open Raw and Compute both Sv and both TS
-    ed = ep.open_raw(ek80_path / "D20170912-T234910.raw", sonar_model = "EK80")
-    ds_Sv_bb = ep.calibrate.compute_Sv(ed, waveform_mode="BB", encode_mode="complex")
-    ds_Sv_fm = ep.calibrate.compute_Sv(ed, waveform_mode="FM", encode_mode="complex")
-    ds_TS_bb = ep.calibrate.compute_TS(ed, waveform_mode="BB", encode_mode="complex")
-    ds_TS_fm = ep.calibrate.compute_TS(ed, waveform_mode="FM", encode_mode="complex")
+    """Check that waveform_mode='BB' and waveform_mode='FM' produce identical Sv and TS."""
+    ed = ep.open_raw(ek80_path / "D20170912-T234910.raw", sonar_model="EK80")
 
-    # Check that they are equal
+    with pytest.deprecated_call(match="'BB' is deprecated"):
+        ds_Sv_bb = ep.calibrate.compute_Sv(
+            ed, waveform_mode="BB", encode_mode="complex"
+        )
+
+    ds_Sv_fm = ep.calibrate.compute_Sv(
+        ed, waveform_mode="FM", encode_mode="complex"
+    )
+
+    with pytest.deprecated_call(match="'BB' is deprecated"):
+        ds_TS_bb = ep.calibrate.compute_TS(
+            ed, waveform_mode="BB", encode_mode="complex"
+        )
+
+    ds_TS_fm = ep.calibrate.compute_TS(
+        ed, waveform_mode="FM", encode_mode="complex"
+    )
+
     assert ds_Sv_bb.equals(ds_Sv_fm)
     assert ds_TS_bb.equals(ds_TS_fm)
 
