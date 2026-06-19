@@ -2051,8 +2051,8 @@ def _coords_ping_range(n_ping=5, n_range=10):
         "range_sample": np.arange(n_range),
     }
 
-# Stub: Matecho-style ds (3D with channel)
-def _make_ds_matecho_minimal(
+# Stub: from-Sv detector input (3D with channel)
+def _make_ds_from_Sv_minimal(
     n_ping=5,
     n_range=10,
     channels=("chan1",),
@@ -2223,7 +2223,7 @@ def _make_ds_matecho_minimal(
     return ds
 
 
-def _make_ds_matecho_wrong_dims_missing_range(channels=("chan1",), n_ping=5) -> xr.Dataset:
+def _make_ds_from_Sv_wrong_dims_missing_range(channels=("chan1",), n_ping=5) -> xr.Dataset:
     # Sv missing range_sample dim intentionally (and also missing range_sample coord/dim)
     da = xr.DataArray(
         np.full((len(channels), n_ping), -90.0, dtype=float),
@@ -2242,8 +2242,8 @@ def _make_ds_matecho_wrong_dims_missing_range(channels=("chan1",), n_ping=5) -> 
     return ds
 
 
-# Stub: EV split method2 ds_m2 (2D, no channel dim)
-def _make_ds_ev_m2_minimal(n_ping=5, n_range=10) -> xr.Dataset:
+# Stub: from-Sp detector input (2D, no channel dim)
+def _make_ds_from_Sp_minimal(n_ping=5, n_range=10) -> xr.Dataset:
     coords = _coords_ping_range(n_ping, n_range)
 
     TS = xr.DataArray(
@@ -2272,8 +2272,8 @@ def _make_ds_ev_m2_minimal(n_ping=5, n_range=10) -> xr.Dataset:
     )
 
     sound_absorption = xr.DataArray(0.003, name="sound_absorption")
-    timeSampleInterval_usec = xr.DataArray(40.0, name="timeSampleInterval_usec")
-    effective_pulse_duration = xr.DataArray(8e-4, name="effective_pulse_duration")
+    sample_interval = xr.DataArray(4e-5, name="sample_interval")
+    tau_effective = xr.DataArray(8e-4, name="tau_effective")
 
     frequency_nominal = xr.DataArray(38000.0, name="frequency_nominal")
 
@@ -2292,8 +2292,8 @@ def _make_ds_ev_m2_minimal(n_ping=5, n_range=10) -> xr.Dataset:
             angle_alongship=angle_al,
             angle_athwartship=angle_ath,
             sound_absorption=sound_absorption,
-            timeSampleInterval_usec=timeSampleInterval_usec,
-            effective_pulse_duration=effective_pulse_duration,
+            sample_interval=sample_interval,
+            tau_effective=tau_effective,
             frequency_nominal=frequency_nominal,
             beamwidth_alongship=beamwidth_al,
             beamwidth_athwartship=beamwidth_at,
@@ -2309,7 +2309,7 @@ def _make_ds_ev_m2_minimal(n_ping=5, n_range=10) -> xr.Dataset:
 # Tests: dispatcher generic
 @pytest.mark.unit
 def test_detect_single_targets_unknown_method_raises():
-    ds = _make_ds_matecho_minimal()
+    ds = _make_ds_from_Sv_minimal()
     with pytest.raises(ValueError, match="Unsupported single-target method"):
         detect_single_targets(
             ds,
@@ -2320,25 +2320,25 @@ def test_detect_single_targets_unknown_method_raises():
 
 @pytest.mark.unit
 def test_detect_single_targets_params_required_raises():
-    ds = _make_ds_matecho_minimal()
+    ds = _make_ds_from_Sv_minimal()
     with pytest.raises(ValueError, match="No parameters given"):
-        detect_single_targets(ds, method="matecho", params=None)
+        detect_single_targets(ds, method="from_Sv", params=None)
 
 
 @pytest.mark.unit
 def test_detect_single_targets_beam_type_missing_raises():
-    ds = _make_ds_matecho_minimal().drop_vars("beam_type")
+    ds = _make_ds_from_Sv_minimal().drop_vars("beam_type")
     with pytest.raises(ValueError, match="beam_type variable is missing"):
         detect_single_targets(
             ds,
-            method="matecho",
+            method="from_Sv",
             params={"channel": "chan1", "seafloor": np.zeros(ds.sizes["ping_time"])},
         )
 
 
 @pytest.mark.unit
 def test_detect_single_targets_beam_type_not_split_raises():
-    ds = _make_ds_matecho_minimal()
+    ds = _make_ds_from_Sv_minimal()
     ds["beam_type"] = xr.DataArray(
         np.full(ds.sizes["channel"], 2, dtype=np.int16),
         dims=("channel",),
@@ -2347,13 +2347,13 @@ def test_detect_single_targets_beam_type_not_split_raises():
     with pytest.raises(ValueError, match="Only split-beam data supported"):
         detect_single_targets(
             ds,
-            method="matecho",
+            method="from_Sv",
             params={"channel": "chan1", "seafloor": np.zeros(ds.sizes["ping_time"])},
         )
 
 
-# Tests: matecho-specific validation + schema
-MATECHO_REQ = {
+# Tests: from-Sv validation + schema
+FROM_SV_REQ = {
     "channel": "chan1",
     "seafloor": None,
     "min_threshold_db": -58.0,
@@ -2370,42 +2370,42 @@ MATECHO_REQ = {
 
 
 @pytest.mark.unit
-def test_detect_single_targets_matecho_missing_channel_param_raises():
-    ds = _make_ds_matecho_minimal()
-    p = dict(MATECHO_REQ)
+def test_detect_single_targets_from_Sv_missing_channel_param_raises():
+    ds = _make_ds_from_Sv_minimal()
+    p = dict(FROM_SV_REQ)
     p.pop("channel")
     p["seafloor"] = np.zeros(ds.sizes["ping_time"])
     with pytest.raises(ValueError, match=r"params\['channel'\]"):
-        detect_single_targets(ds, method="matecho", params=p)
+        detect_single_targets(ds, method="from_Sv", params=p)
 
 
 @pytest.mark.unit
-def test_detect_single_targets_matecho_channel_not_in_ds_raises():
-    ds = _make_ds_matecho_minimal(channels=("chan1",))
-    p = dict(MATECHO_REQ)
+def test_detect_single_targets_from_Sv_channel_not_in_ds_raises():
+    ds = _make_ds_from_Sv_minimal(channels=("chan1",))
+    p = dict(FROM_SV_REQ)
     p["channel"] = "chanX"
     p["seafloor"] = np.zeros(ds.sizes["ping_time"])
     with pytest.raises(ValueError, match=r"Channel 'chanX' not found"):
-        detect_single_targets(ds, method="matecho", params=p)
+        detect_single_targets(ds, method="from_Sv", params=p)
 
 
 @pytest.mark.unit
-def test_detect_single_targets_matecho_sv_wrong_dims_raises():
-    ds = _make_ds_matecho_wrong_dims_missing_range()
-    p = dict(MATECHO_REQ)
+def test_detect_single_targets_from_Sv_wrong_dims_raises():
+    ds = _make_ds_from_Sv_wrong_dims_missing_range()
+    p = dict(FROM_SV_REQ)
     p["seafloor"] = np.zeros(ds.sizes["ping_time"])
 
     with pytest.raises(ValueError, match=r"Missing required coordinate/dimension: 'range_sample'"):
-        detect_single_targets(ds, method="matecho", params=p)
+        detect_single_targets(ds, method="from_Sv", params=p)
 
 
 @pytest.mark.unit
-def test_detect_single_targets_matecho_returns_empty_with_required_fields():
-    ds = _make_ds_matecho_minimal()
-    p = dict(MATECHO_REQ)
+def test_detect_single_targets_from_Sv_returns_empty_with_required_fields():
+    ds = _make_ds_from_Sv_minimal()
+    p = dict(FROM_SV_REQ)
     p["seafloor"] = np.zeros(ds.sizes["ping_time"])
 
-    out = detect_single_targets(ds, method="matecho", params=p)
+    out = detect_single_targets(ds, method="from_Sv", params=p)
 
     assert isinstance(out, xr.Dataset)
     assert "target" in out.dims
@@ -2419,20 +2419,20 @@ def test_detect_single_targets_matecho_returns_empty_with_required_fields():
 
 @pytest.mark.unit
 def test_detect_single_targets_concat_empty_is_stable():
-    ds = _make_ds_matecho_minimal()
-    p = dict(MATECHO_REQ)
+    ds = _make_ds_from_Sv_minimal()
+    p = dict(FROM_SV_REQ)
     p["seafloor"] = np.zeros(ds.sizes["ping_time"])
 
-    out1 = detect_single_targets(ds, method="matecho", params=p)
-    out2 = detect_single_targets(ds, method="matecho", params=p)
+    out1 = detect_single_targets(ds, method="from_Sv", params=p)
+    out2 = detect_single_targets(ds, method="from_Sv", params=p)
 
-    outc = xr.concat([out1, out2], dim="target")
+    outc = xr.concat([out1, out2], dim="target", data_vars="all")
     assert "target" in outc.dims
     assert outc.sizes["target"] == 0
 
 
-# Tests: EV split method2
-EV_REQ = {
+# Tests: from-Sp validation
+FROM_SP_REQ = {
     "ts_threshold_db": -58.0,
     "pldl_db": 6.0,
     "min_norm_pulse": 0.7,
@@ -2445,16 +2445,16 @@ EV_REQ = {
 
 
 @pytest.mark.unit
-def test_detect_single_targets_echoview_m2_missing_required_param_raises():
-    ds = _make_ds_ev_m2_minimal()
-    p = dict(EV_REQ)
+def test_detect_single_targets_from_Sp_missing_required_param_raises():
+    ds = _make_ds_from_Sp_minimal()
+    p = dict(FROM_SP_REQ)
     p.pop("pldl_db")
     with pytest.raises(ValueError, match=r"Missing required parameters"):
-        detect_single_targets(ds, method="echoview_split_method2", params=p)
+        detect_single_targets(ds, method="from_Sp", params=p)
 
 
 @pytest.mark.unit
-def test_detect_single_targets_echoview_m2_missing_required_ds_var_raises():
-    ds = _make_ds_ev_m2_minimal().drop_vars("effective_pulse_duration")
-    with pytest.raises(ValueError, match=r"ds_m2 missing required variable"):
-        detect_single_targets(ds, method="echoview_split_method2", params=dict(EV_REQ))
+def test_detect_single_targets_from_Sp_missing_required_ds_var_raises():
+    ds = _make_ds_from_Sp_minimal().drop_vars("tau_effective")
+    with pytest.raises(ValueError, match=r"ds_sp missing required variable"):
+        detect_single_targets(ds, method="from_Sp", params=dict(FROM_SP_REQ))

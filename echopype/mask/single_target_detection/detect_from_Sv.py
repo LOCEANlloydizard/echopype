@@ -76,7 +76,7 @@ def _require_dims(da: xr.DataArray, name: str, dims: tuple[str, ...]) -> None:
             raise ValueError(f"Variable '{name}' must have dim '{d}'. Got dims={got}")
 
 
-def validate_matecho_inputs_strict(ds: xr.Dataset, params: dict) -> tuple[str, xr.DataArray]:
+def _validate_from_Sv_inputs(ds: xr.Dataset, params: dict) -> tuple[str, xr.DataArray]:
     if params is None:
         raise ValueError("params is required.")
     if "channel" not in params or params["channel"] is None:
@@ -706,7 +706,7 @@ def _cond_8_refine_and_spacing_matecho(
 # return steps
 
 
-def _matecho_out_to_dataset(out: dict, *, channel: str) -> xr.Dataset:
+def _from_Sv_out_to_dataset(out: dict, *, channel: str) -> xr.Dataset:
     n = int(out.get("nb_valid_targets", 0))
     target = np.arange(n, dtype=int)
 
@@ -724,7 +724,7 @@ def _matecho_out_to_dataset(out: dict, *, channel: str) -> xr.Dataset:
                 target=empty_target,
                 channel=channel,
             ),
-            attrs=dict(method="matecho", channel=str(channel), nb_valid_targets=0),
+            attrs=dict(method="from_Sv", channel=str(channel), nb_valid_targets=0),
         )
 
     def _arr(key, dtype=float):
@@ -765,7 +765,7 @@ def _matecho_out_to_dataset(out: dict, *, channel: str) -> xr.Dataset:
             ping_number=("target", _arr("ping_number", int)),
             channel=channel,
         ),
-        attrs=dict(method="matecho", channel=str(channel), nb_valid_targets=n),
+        attrs=dict(method="from_Sv", channel=str(channel), nb_valid_targets=n),
     )
     return ds_out
 
@@ -851,7 +851,8 @@ def detect_from_Sv(
     params: dict,
 ) -> xr.Dataset:
     """
-    Matecho-style CW split-beam single-target detector, ported to echopype.
+    Single-target detection from volume backscattering strength (Sv).
+    Current implementation follows the Matecho-style CW split-beam workflow.
 
     Implements the Matecho Cond-1…Cond-8 pipeline on Sv (dB) and split-beam
     angles for a single channel. TSU/TS/Plike are computed internally (Sv to TS transform,
@@ -934,11 +935,11 @@ def detect_from_Sv(
           • `time` (datetime64)
           • angle fields at the detected position
           • `nb_valid_targets` scalar
-        and attrs: `method="matecho"`, `channel=<channel>`, `nb_valid_targets=<n>`.
+        and attrs: `method="from_Sv"`, `channel=<channel>`, `nb_valid_targets=<n>`.
 
     """
 
-    channel, Sv_da = validate_matecho_inputs_strict(ds, params)
+    channel, Sv_da = _validate_from_Sv_inputs(ds, params)
     params = dict(params)
     params["channel"] = channel
 
@@ -1006,4 +1007,4 @@ def detect_from_Sv(
     )
 
     out = _build_outputs_from_refined(ds=ds, params=params, ex=ex, meta=meta, c7=c7, c8=c8)
-    return _matecho_out_to_dataset(out, channel=channel)
+    return _from_Sv_out_to_dataset(out, channel=channel)
