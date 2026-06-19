@@ -6,9 +6,10 @@ import echopype as ep
 
 pytestmark = pytest.mark.integration
 
+# TS
+
 CRIMAC_CHANNEL = "WBT 747022-15 ES120-7CD_ES"
 CRIMAC_PING_INDEX = 509
-
 
 @pytest.fixture(scope="module")
 def ts_spectrum_example_path(test_path):
@@ -34,6 +35,7 @@ def ts_echodata(ts_raw_path):
 
 
 def _target_locations_from_crimac(ed, ref, channel, ping_index):
+    """Build point-location input from the CRIMAC reference target."""
     ping_time = ed["Sonar/Beam_group1"]["ping_time"].isel(ping_time=ping_index).values
 
     return xr.Dataset(
@@ -53,6 +55,7 @@ def _target_locations_from_crimac(ed, ref, channel, ping_index):
 
 
 def test_compute_sp_fm_complex_runs(ts_echodata):
+    """Check that broadband complex Sp calibration runs and returns finite data."""
     ds = ep.calibrate.compute_Sp(
         ts_echodata,
         waveform_mode="FM",
@@ -65,9 +68,10 @@ def test_compute_sp_fm_complex_runs(ts_echodata):
 
 
 def test_frequency_dependent_absorption_matches_crimac(ts_echodata, ts_ref):
+    """Check that echopype frequency-dependent absorption matches CRIMAC."""
     cal_obj = ep.calibrate.calibrate_ek.CalibrateEK80(
         echodata=ts_echodata,
-        waveform_mode="BB", #TODO change to FM after deprecation of BB
+        waveform_mode="BB",  # TODO change to FM after deprecation of BB
         encode_mode="complex",
         env_params=None,
         cal_params=None,
@@ -91,6 +95,7 @@ def test_frequency_dependent_absorption_matches_crimac(ts_echodata, ts_ref):
 
 
 def test_compute_ts_spectrum_matches_crimac(ts_echodata, ts_ref):
+    """Check that echopype TS(f) matches the CRIMAC reference target."""
     point_locations = _target_locations_from_crimac(
         ed=ts_echodata,
         ref=ts_ref,
@@ -114,23 +119,41 @@ def test_compute_ts_spectrum_matches_crimac(ts_echodata, ts_ref):
     )
 
     assert ts.shape == ts_ref["TS_m"].shape
-    np.testing.assert_allclose(ts, ts_ref["TS_m"], atol=0.5, rtol=0.0)
+    np.testing.assert_allclose(ts, ts_ref["TS_m"], atol=0.1, rtol=0.0)
 
 
-def test_compute_Sv_spectrum_not_implemented(ts_echodata):
-    """
-    Test that compute_Sv_spectrum raises NotImplementedError
-    for EK80 broadband complex data, since this is not currently implemented.
-    """
-    with pytest.raises(NotImplementedError):
-        ep.calibrate.compute_Sv_spectrum(
-            ts_echodata,
-            waveform_mode="FM",
-            encode_mode="complex",
-        )
-        
+def test_beam_compensated_gain_matches_crimac(ts_echodata, ts_ref):
+    """Check that echopype g(theta, phi, f) matches CRIMAC beam compensation."""
+    cal_obj = ep.calibrate.calibrate_ek.CalibrateEK80(
+        echodata=ts_echodata,
+        waveform_mode="FM",
+        encode_mode="complex",
+        env_params=None,
+        cal_params=None,
+    )
+
+    frequency = ts_ref["f_m"]
+
+    g_ep = cal_obj._get_beam_compensated_gain(
+        channel=CRIMAC_CHANNEL,
+        theta=float(ts_ref["theta_t"]),
+        phi=float(ts_ref["phi_t"]),
+        frequency=frequency,
+    )
+
+    g2_db_ep = 10 * np.log10(g_ep**2)
+
+    np.testing.assert_allclose(
+        g2_db_ep,
+        ts_ref["g_theta_phi_m_db"],
+        atol=1e-3,
+        rtol=0.0,
+    )
+
+
 @pytest.mark.parametrize("window", [None, "boxcar", "hann", "hamming", ("tukey", 0.25)])
 def test_compute_ts_spectrum_accepts_scipy_windows(ts_echodata, ts_ref, window):
+    """Check that TS(f) accepts valid scipy window specifications."""
     point_locations = _target_locations_from_crimac(
         ed=ts_echodata,
         ref=ts_ref,
@@ -149,8 +172,10 @@ def test_compute_ts_spectrum_accepts_scipy_windows(ts_echodata, ts_ref, window):
 
     assert "TS_spectrum" in ds
     assert np.isfinite(ds["TS_spectrum"]).any()
-    
+
+
 def test_compute_ts_spectrum_none_window_matches_boxcar(ts_echodata, ts_ref):
+    """Check that window=None is equivalent to a boxcar window."""
     point_locations = _target_locations_from_crimac(
         ed=ts_echodata,
         ref=ts_ref,
@@ -170,9 +195,10 @@ def test_compute_ts_spectrum_none_window_matches_boxcar(ts_echodata, ts_ref):
     ds_boxcar = ep.calibrate.compute_TS_spectrum(**kwargs, window="boxcar")
 
     xr.testing.assert_allclose(ds_none["TS_spectrum"], ds_boxcar["TS_spectrum"])
-    
-    
+
+
 def test_compute_ts_spectrum_explicit_range_ignores_split_front(ts_echodata, ts_ref):
+    """Check that explicit target range bounds override split_front."""
     point_locations = _target_locations_from_crimac(
         ed=ts_echodata,
         ref=ts_ref,
@@ -192,8 +218,10 @@ def test_compute_ts_spectrum_explicit_range_ignores_split_front(ts_echodata, ts_
     ds_075 = ep.calibrate.compute_TS_spectrum(**kwargs, split_front=0.75)
 
     xr.testing.assert_allclose(ds_025["TS_spectrum"], ds_075["TS_spectrum"])
-    
+
+
 def test_compute_ts_spectrum_target_range_only_uses_split_front(ts_echodata, ts_ref):
+    """Check that split_front affects TS(f) when only target_range is provided."""
     point_locations = _target_locations_from_crimac(
         ed=ts_echodata,
         ref=ts_ref,
@@ -217,3 +245,15 @@ def test_compute_ts_spectrum_target_range_only_uses_split_front(ts_echodata, ts_
         ds_075["TS_spectrum"].values,
         equal_nan=True,
     )
+    
+    
+# Sv
+
+def test_compute_Sv_spectrum_not_implemented(ts_echodata):
+    """Check that broadband complex Sv(f) raises NotImplementedError."""
+    with pytest.raises(NotImplementedError):
+        ep.calibrate.compute_Sv_spectrum(
+            ts_echodata,
+            waveform_mode="FM",
+            encode_mode="complex",
+        )
