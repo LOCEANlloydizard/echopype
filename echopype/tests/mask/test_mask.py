@@ -2317,6 +2317,31 @@ def test_detect_single_targets_unknown_method_raises():
             params={"channel": "chan1", "seafloor": np.zeros(ds.sizes["ping_time"])},
         )
 
+@pytest.mark.unit
+def test_detect_single_targets_fm_not_implemented_raises():
+    ds = _make_ds_from_Sv_minimal()
+
+    with pytest.raises(NotImplementedError, match="FM single-target detection"):
+        detect_single_targets(
+            ds,
+            method="from_Sv",
+            params={"channel": "chan1", "seafloor": np.zeros(ds.sizes["ping_time"])},
+            waveform_mode="FM",
+        )
+
+
+@pytest.mark.unit
+def test_detect_single_targets_invalid_waveform_mode_raises():
+    ds = _make_ds_from_Sv_minimal()
+
+    with pytest.raises(ValueError, match="waveform_mode must be 'CW' or 'FM'"):
+        detect_single_targets(
+            ds,
+            method="from_Sv",
+            params={"channel": "chan1", "seafloor": np.zeros(ds.sizes["ping_time"])},
+            waveform_mode="BB",
+        )
+
 
 @pytest.mark.unit
 def test_detect_single_targets_params_required_raises():
