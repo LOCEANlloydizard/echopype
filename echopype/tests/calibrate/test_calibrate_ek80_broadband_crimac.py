@@ -121,6 +121,35 @@ def test_frequency_dependent_absorption_matches_crimac(ts_echodata, ts_ref):
     )
 
 
+def test_beam_compensated_gain_matches_crimac(ts_echodata, ts_ref):
+    """Check that echopype g(theta, phi, f) matches CRIMAC beam compensation."""
+    cal_obj = ep.calibrate.calibrate_ek.CalibrateEK80(
+        echodata=ts_echodata,
+        waveform_mode="BB",  # TODO change to FM after deprecation of BB
+        encode_mode="complex",
+        env_params=None,
+        cal_params=None,
+    )
+
+    frequency = ts_ref["f_m"]
+
+    g_ep = cal_obj._get_beam_compensated_gain(
+        channel=CRIMAC_CHANNEL,
+        theta=float(ts_ref["theta_t"]),
+        phi=float(ts_ref["phi_t"]),
+        frequency=frequency,
+    )
+
+    g2_db_ep = 10 * np.log10(g_ep**2)
+
+    np.testing.assert_allclose(
+        g2_db_ep,
+        ts_ref["g_theta_phi_m_db"],
+        atol=1e-3,
+        rtol=0.0,
+    )
+
+
 def test_compute_ts_spectrum_matches_crimac(ts_echodata, ts_ref):
     """Check that echopype TS(f) matches the CRIMAC reference target."""
     point_locations = _target_locations_from_crimac(
