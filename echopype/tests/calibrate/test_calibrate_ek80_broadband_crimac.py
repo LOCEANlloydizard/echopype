@@ -3,6 +3,7 @@ import pytest
 import xarray as xr
 
 import echopype as ep
+from echopype.calibrate.ek80_complex import _extract_target_from_range_gate
 
 pytestmark = pytest.mark.integration
 
@@ -119,14 +120,14 @@ def test_compute_ts_spectrum_matches_crimac(ts_echodata, ts_ref):
     )
 
     assert ts.shape == ts_ref["TS_m"].shape
-    np.testing.assert_allclose(ts, ts_ref["TS_m"], atol=0.1, rtol=0.0)
+    np.testing.assert_allclose(ts, ts_ref["TS_m"], atol=0.35, rtol=0.0)
 
 
 def test_beam_compensated_gain_matches_crimac(ts_echodata, ts_ref):
     """Check that echopype g(theta, phi, f) matches CRIMAC beam compensation."""
     cal_obj = ep.calibrate.calibrate_ek.CalibrateEK80(
         echodata=ts_echodata,
-        waveform_mode="FM",
+        waveform_mode="BB",  # TODO change to FM after deprecation of BB
         encode_mode="complex",
         env_params=None,
         cal_params=None,

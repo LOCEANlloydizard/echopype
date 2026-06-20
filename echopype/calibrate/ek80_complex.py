@@ -110,6 +110,42 @@ def _align_autocorrelation(
     return mf_auto[idx_start:idx_stop]
 
 
+def _extract_target_from_range_gate(
+    pc_avg_1d: np.ndarray,
+    range_1d: np.ndarray,
+    theta_raw: np.ndarray,
+    phi_raw: np.ndarray,
+    target_range: float,
+    target_range_min: float | None,
+    target_range_max: float | None,
+    split_front: float,
+    n_fft: int,
+):
+    """Extract target echo and peak angles from a known range gate."""
+    if target_range_min is not None and target_range_max is not None:
+        target_mask = (range_1d >= target_range_min) & (range_1d <= target_range_max)
+    else:
+        idx_target = int(np.nanargmin(np.abs(range_1d - target_range)))
+        n_before = int(np.floor(split_front * n_fft))
+        n_after = n_fft - n_before
+        idx_start = max(0, idx_target - n_before)
+        idx_stop = min(range_1d.size, idx_target + n_after)
+
+        target_mask = np.zeros(range_1d.size, dtype=bool)
+        target_mask[idx_start:idx_stop] = True
+
+    if not np.any(target_mask):
+        raise ValueError("No samples found inside target range gate.")
+
+    pc_target = pc_avg_1d[target_mask]
+
+    idx_peak = int(np.nanargmax(np.abs(pc_target) ** 2))
+    theta_t = float(theta_raw[target_mask][idx_peak])
+    phi_t = float(phi_raw[target_mask][idx_peak])
+
+    return pc_target, theta_t, phi_t, target_mask
+
+
 def _compute_ts_spectrum(
     pc_target: np.ndarray,
     mf_auto_red: np.ndarray,

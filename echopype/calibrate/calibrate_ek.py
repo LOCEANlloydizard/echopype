@@ -17,6 +17,7 @@ from .ek80_complex import (
     _compute_ts_spectrum,
     _compute_ts_spectrum_calibrated,
     _compute_ts_spectrum_power,
+    _extract_target_from_range_gate,
     _get_autocorrelation,
     _get_average_signal,
     _get_pulse_compressed_signal,
@@ -965,20 +966,9 @@ class CalibrateEK80(CalibrateEK):
                     target_range_max = float(
                         points_ch["target_range_max"].isel(target_id=point_idx)
                     )
-                    target_mask = (range_1d >= target_range_min) & (range_1d <= target_range_max)
-                else:  # splitfront is added
-                    idx_target = int(np.nanargmin(np.abs(range_1d - target_range)))
-                    n_before = int(np.floor(split_front * n_fft))
-                    n_after = n_fft - n_before
-                    idx_start = max(0, idx_target - n_before)
-                    idx_stop = min(range_1d.size, idx_target + n_after)
-                    target_mask = np.zeros(range_1d.size, dtype=bool)
-                    target_mask[idx_start:idx_stop] = True
-
-                if not np.any(target_mask):
-                    continue
-
-                pc_target = pc_avg_1d[target_mask]
+                else:
+                    target_range_min = None
+                    target_range_max = None
 
                 gamma_alongship = float(
                     self._select_param(
@@ -1004,9 +994,20 @@ class CalibrateEK80(CalibrateEK):
                 theta_raw = theta_raw_da.where(valid, drop=True).values
                 phi_raw = phi_raw_da.where(valid, drop=True).values
 
-                idx_peak = int(np.nanargmax(np.abs(pc_avg_1d[target_mask]) ** 2))
-                theta_t = float(theta_raw[target_mask][idx_peak])
-                phi_t = float(phi_raw[target_mask][idx_peak])
+                try:
+                    pc_target, theta_t, phi_t, target_mask = _extract_target_from_range_gate(
+                        pc_avg_1d=pc_avg_1d,
+                        range_1d=range_1d,
+                        theta_raw=theta_raw,
+                        phi_raw=phi_raw,
+                        target_range=target_range,
+                        target_range_min=target_range_min,
+                        target_range_max=target_range_max,
+                        split_front=split_front,
+                        n_fft=n_fft,
+                    )
+                except ValueError:
+                    continue
 
                 if window is None:
                     win = np.ones(pc_target.size)
