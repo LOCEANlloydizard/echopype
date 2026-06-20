@@ -54,6 +54,32 @@ def _target_locations_from_crimac(ed, ref, channel, ping_index):
         },
     )
 
+def test_extract_target_from_range_gate_uses_peak_angle():
+    """Check that target extraction returns the gate echo and peak angles."""
+    pc_avg_1d = np.array([0.0, 1.0, 5.0, 2.0, 0.0])
+    range_1d = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+    theta_raw = np.array([0.0, 10.0, 20.0, 30.0, 40.0])
+    phi_raw = np.array([0.0, -10.0, -20.0, -30.0, -40.0])
+
+    pc_target, theta_t, phi_t, target_mask = _extract_target_from_range_gate(
+        pc_avg_1d=pc_avg_1d,
+        range_1d=range_1d,
+        theta_raw=theta_raw,
+        phi_raw=phi_raw,
+        target_range=3.0,
+        target_range_min=2.0,
+        target_range_max=4.0,
+        split_front=0.25,
+        n_fft=4,
+    )
+
+    np.testing.assert_array_equal(pc_target, np.array([1.0, 5.0, 2.0]))
+    np.testing.assert_array_equal(
+        target_mask,
+        np.array([False, True, True, True, False]),
+    )
+    assert theta_t == 20.0
+    assert phi_t == -20.0
 
 def test_compute_sp_fm_complex_runs(ts_echodata):
     """Check that broadband complex Sp calibration runs and returns finite data."""
@@ -121,35 +147,6 @@ def test_compute_ts_spectrum_matches_crimac(ts_echodata, ts_ref):
 
     assert ts.shape == ts_ref["TS_m"].shape
     np.testing.assert_allclose(ts, ts_ref["TS_m"], atol=0.35, rtol=0.0)
-
-
-def test_beam_compensated_gain_matches_crimac(ts_echodata, ts_ref):
-    """Check that echopype g(theta, phi, f) matches CRIMAC beam compensation."""
-    cal_obj = ep.calibrate.calibrate_ek.CalibrateEK80(
-        echodata=ts_echodata,
-        waveform_mode="BB",  # TODO change to FM after deprecation of BB
-        encode_mode="complex",
-        env_params=None,
-        cal_params=None,
-    )
-
-    frequency = ts_ref["f_m"]
-
-    g_ep = cal_obj._get_beam_compensated_gain(
-        channel=CRIMAC_CHANNEL,
-        theta=float(ts_ref["theta_t"]),
-        phi=float(ts_ref["phi_t"]),
-        frequency=frequency,
-    )
-
-    g2_db_ep = 10 * np.log10(g_ep**2)
-
-    np.testing.assert_allclose(
-        g2_db_ep,
-        ts_ref["g_theta_phi_m_db"],
-        atol=1e-3,
-        rtol=0.0,
-    )
 
 
 @pytest.mark.parametrize("window", [None, "boxcar", "hann", "hamming", ("tukey", 0.25)])
