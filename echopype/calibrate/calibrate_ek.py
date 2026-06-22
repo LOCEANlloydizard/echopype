@@ -292,7 +292,10 @@ class CalibrateEK60(CalibrateEK):
         return self._cal_power_samples(cal_type="Sv")
 
     def compute_TS(self, **kwargs):
-        return self._cal_power_samples(cal_type="TS")
+        raise NotImplementedError(
+            "Gridded TS is deprecated. Use compute_Sp() first, detect targets, "
+            "then call echopype.calibrate.compute_TS(source_Sp, point_locations=...)."
+        )
 
     def compute_Sp(self, **kwargs):
         return self._cal_power_samples(cal_type="Sp")
@@ -1244,21 +1247,11 @@ class CalibrateEK80(CalibrateEK):
         """
         return self._compute_cal(cal_type="Sp")
 
-    def compute_TS(self):
-        """
-        For CW split-beam data, TS is computed from Sp with beam compensation
-        using split-beam angle information. For EK80 broadband/FM complex data,
-        this function returns a band-averaged, center-frequency beam-compensated
-        TS product after pulse compression. For frequency-dependent target
-        strength spectra, use ``compute_TS_spectrum()``.
-
-        Returns
-        -------
-        TS : xr.Dataset
-            A DataSet containing target strength (``TS``)
-            and the corresponding range (``echo_range``) in units meter.
-        """
-        return self._compute_cal(cal_type="TS")
+    def compute_TS(self, **kwargs):
+        raise NotImplementedError(
+            "Gridded TS is deprecated. Use compute_Sp() first, detect targets, "
+            "then call echopype.calibrate.compute_TS(source_Sp, point_locations=...)."
+        )
 
     def compute_TS_spectrum(
         self,

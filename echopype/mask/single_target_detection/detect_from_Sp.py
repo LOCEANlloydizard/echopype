@@ -3,12 +3,7 @@ from __future__ import annotations
 import numpy as np
 import xarray as xr
 
-# ##
-# Params validation
-# ##
-
 REQUIRED_PARAMS = {
-    "ts_threshold_db",
     "pldl_db",
     "min_norm_pulse",
     "max_norm_pulse",
@@ -30,20 +25,24 @@ OPTIONAL_PARAMS = {
 def _validate_params(params: dict) -> dict:
     if params is None:
         raise ValueError("No parameters given.")
+
     unknown = set(params.keys()) - (REQUIRED_PARAMS | OPTIONAL_PARAMS)
     if unknown:
         raise ValueError(f"Unknown parameters: {sorted(unknown)}")
+
     missing = REQUIRED_PARAMS - set(params.keys())
     if missing:
         raise ValueError(f"Missing required parameters: {sorted(missing)}")
+
     if params["min_norm_pulse"] > params["max_norm_pulse"]:
         raise ValueError("min_norm_pulse must be <= max_norm_pulse")
+
     return params
 
 
 def _validate_from_Sp_dataset(ds_sp: xr.Dataset) -> xr.Dataset:
     must = [
-        "TS",
+        "Sp",
         "echo_range",
         "angle_alongship",
         "angle_athwartship",
@@ -51,59 +50,59 @@ def _validate_from_Sp_dataset(ds_sp: xr.Dataset) -> xr.Dataset:
         "sample_interval",
         "tau_effective",
     ]
+
     for v in must:
         if v not in ds_sp:
             raise ValueError(f"ds_sp missing required variable: {v}")
 
-    ts_mat = ds_sp["TS"]
-    if ts_mat.dims != ("ping_time", "range_sample"):
-        raise ValueError("Expected ds_sp['TS'] dims exactly ('ping_time','range_sample').")
+    sp_mat = ds_sp["Sp"]
+
+    if sp_mat.dims != ("ping_time", "range_sample"):
+        raise ValueError("Expected ds_sp['Sp'] dims exactly ('ping_time', 'range_sample').")
+
     for v in ["echo_range", "angle_alongship", "angle_athwartship"]:
         if ds_sp[v].dims != ("ping_time", "range_sample"):
-            raise ValueError(f"Expected ds_sp['{v}'] dims exactly ('ping_time','range_sample').")
+            raise ValueError(f"Expected ds_sp['{v}'] dims exactly ('ping_time', 'range_sample').")
 
-    # Broadcast alpha to 2D if needed (for simple math)
     alpha = ds_sp["sound_absorption"]
+
     if alpha.ndim == 1:
-        ds_sp = ds_sp.assign(sound_absorption=alpha.broadcast_like(ts_mat))
+        ds_sp = ds_sp.assign(sound_absorption=alpha.broadcast_like(sp_mat))
     elif alpha.ndim == 0:
-        ds_sp = ds_sp.assign(sound_absorption=(xr.zeros_like(ts_mat) + alpha))
+        ds_sp = ds_sp.assign(sound_absorption=xr.zeros_like(sp_mat) + alpha)
     elif alpha.ndim == 2:
         pass
     else:
-        raise ValueError("sound_absorption must be scalar, 1D(ping_time), or 2D like TS.")
+        raise ValueError("sound_absorption must be scalar, 1D(ping_time), or 2D like Sp.")
 
     return ds_sp
 
 
-# ##
-# Core algorithm equations
-# ##
-
-
-def _plike_from_ts(
-    ts_db: xr.DataArray, r_m: xr.DataArray, alpha_db_m: xr.DataArray
+def _plike_from_sp(
+    sp_db: xr.DataArray,
+    r_m: xr.DataArray,
+    alpha_db_m: xr.DataArray,
 ) -> xr.DataArray:
-    # Plike = TS - 40log10(r) - 2 alpha r
     r = xr.where(r_m > 0, r_m, np.nan)
-    return ts_db - 40.0 * xr.apply_ufunc(np.log10, r) - 2.0 * alpha_db_m * r_m
+    return sp_db - 40.0 * xr.apply_ufunc(np.log10, r) - 2.0 * alpha_db_m * r_m
 
 
 def _local_max_first_plateau(plike_mat: xr.DataArray) -> xr.DataArray:
     prev = plike_mat.shift(range_sample=1)
     nxt = plike_mat.shift(range_sample=-1)
+
     peak = (plike_mat > prev) & (plike_mat >= nxt) & ~(plike_mat == prev)
-    peak = peak & xr.apply_ufunc(np.isfinite, prev) & xr.apply_ufunc(np.isfinite, nxt)
+    peak = peak & xr.apply_ufunc(np.isfinite, prev)
+    peak = peak & xr.apply_ufunc(np.isfinite, nxt)
     peak = peak & xr.apply_ufunc(np.isfinite, plike_mat)
+
     return peak
 
 
 def _nech_p_samples(ds_sp: xr.Dataset) -> np.ndarray:
-    # NechP (samples) = tau_effective / sample_interval
     tau = ds_sp["tau_effective"]
     dt = ds_sp["sample_interval"]
 
-    # ---- tau -> 1D per ping_time ----
     if tau.ndim == 0:
         tau_vec = np.full(ds_sp.sizes["ping_time"], float(tau.values), dtype=float)
     elif tau.ndim == 1 and tau.dims == ("ping_time",):
@@ -118,15 +117,15 @@ def _nech_p_samples(ds_sp: xr.Dataset) -> np.ndarray:
     else:
         dt_vec = dt.isel(range_sample=0).values.astype(float)
 
-    sample_interval_sec = dt_vec
-
-    return tau_vec / sample_interval_sec
+    return tau_vec / dt_vec
 
 
 def _envelope_bounds_1d(
-    plike_row: np.ndarray, p: int, thr: float, allow_nans: bool
+    plike_row: np.ndarray,
+    p: int,
+    thr: float,
+    allow_nans: bool,
 ) -> tuple[int | None, int | None]:
-    # expand left
     m = p
     while m > 0:
         v = plike_row[m - 1]
@@ -137,7 +136,6 @@ def _envelope_bounds_1d(
         else:
             break
 
-    # expand right
     last = p
     while last < plike_row.size - 1:
         v = plike_row[last + 1]
@@ -151,20 +149,18 @@ def _envelope_bounds_1d(
     return m, last
 
 
-# ##
-# Beam compensation
-# ##
-
-
 def _beam_comp_db(ds_sp: xr.Dataset, params: dict) -> xr.DataArray:
-
     model = params["beam_comp_model"]
 
     if model == "none":
-        return xr.zeros_like(ds_sp["TS"])
+        return xr.zeros_like(ds_sp["Sp"])
 
-    elif model == "simrad_lobe":
+    if model == "provided":
+        if "beam_comp_db" not in ds_sp:
+            raise ValueError("beam_comp_db must exist if beam_comp_model='provided'")
+        return ds_sp["beam_comp_db"].broadcast_like(ds_sp["Sp"])
 
+    if model == "simrad_lobe":
         th_al = ds_sp["angle_alongship"]
         th_at = ds_sp["angle_athwartship"]
 
@@ -174,38 +170,35 @@ def _beam_comp_db(ds_sp: xr.Dataset, params: dict) -> xr.DataArray:
         off_al = ds_sp["angle_offset_alongship"].broadcast_like(th_al)
         off_at = ds_sp["angle_offset_athwartship"].broadcast_like(th_at)
 
-        x = 2 * (th_al - off_al) / bw_al
-        y = 2 * (th_at - off_at) / bw_at
+        x = 2.0 * (th_al - off_al) / bw_al
+        y = 2.0 * (th_at - off_at) / bw_at
 
         beam_comp_db = 6.0206 * (x**2 + y**2 - 0.18 * x**2 * y**2)
+        return beam_comp_db.broadcast_like(ds_sp["Sp"])
 
-        return beam_comp_db.broadcast_like(ds_sp["TS"])
-
-    elif model == "provided":
-        if "beam_comp_db" not in ds_sp:
-            raise ValueError("beam_comp_db must exist if beam_comp_model='provided'")
-        return ds_sp["beam_comp_db"].broadcast_like(ds_sp["TS"])
-
-    else:
-        raise ValueError(f"Unknown beam_comp_model: {model}")
+    raise ValueError(f"Unknown beam_comp_model: {model}")
 
 
-# ##
-# Phase I
-# ##
+def _phase1_simple(
+    ds_sp: xr.Dataset,
+    params: dict,
+    beam_comp_db: xr.DataArray,
+) -> xr.Dataset:
+    # Echoview split-beam Method 2 starts from a TS-like operand,
+    # then removes TVG/range and absorption to detect on power-like data.
+    # In echopype we start from Sp, so reconstruct the TS-like operand
+    # by adding the beam compensation before computing P_like.
+    ts_like = ds_sp["Sp"] + beam_comp_db
 
-
-def _phase1_simple(ds_sp: xr.Dataset, params: dict, beam_comp_db: xr.DataArray) -> xr.Dataset:
-    """
-    Returns a compact xr.Dataset with dim 'target' and vars:
-      ping_index, range_sample, iinf, isup, pulse_len_samples, norm_pulse_len, plike_peak
-    """
-    plike_mat = _plike_from_ts(ds_sp["TS"], ds_sp["echo_range"], ds_sp["sound_absorption"])
+    plike_mat = _plike_from_sp(
+        ts_like,
+        ds_sp["echo_range"],
+        ds_sp["sound_absorption"],
+    )
 
     cand_mask = _local_max_first_plateau(plike_mat)
     cand_mask = cand_mask & (beam_comp_db <= float(params["max_beam_comp_db"]))
 
-    # optional gates
     if params.get("dec_tir_samples") is not None:
         dec_tir = int(params["dec_tir_samples"])
         idx = xr.DataArray(
@@ -217,21 +210,24 @@ def _phase1_simple(ds_sp: xr.Dataset, params: dict, beam_comp_db: xr.DataArray) 
 
     if params.get("exclude_above_m") is not None:
         cand_mask = cand_mask & (ds_sp["echo_range"] >= float(params["exclude_above_m"]))
+
     if params.get("exclude_below_m") is not None:
         cand_mask = cand_mask & (ds_sp["echo_range"] <= float(params["exclude_below_m"]))
 
     if "bottom" in ds_sp and params.get("bottom_offset_m") is not None:
         off = float(params["bottom_offset_m"])
-        bottom2d = ds_sp["bottom"].broadcast_like(ds_sp["TS"])
+        bottom2d = ds_sp["bottom"].broadcast_like(ds_sp["Sp"])
         cand_mask = cand_mask & (ds_sp["echo_range"] <= (bottom2d - off))
 
-    # numpy loop (envelopes)
     plike_np = plike_mat.values
     cand_np = cand_mask.values
     al_np = ds_sp["angle_alongship"].values
     ath_np = ds_sp["angle_athwartship"].values
+    range_np = ds_sp["echo_range"].values
+    beam_comp_np = beam_comp_db.values
 
     nech_p = _nech_p_samples(ds_sp)
+
     pldl_db = float(params["pldl_db"])
     min_norm_pulse = float(params["min_norm_pulse"])
     max_norm_pulse = float(params["max_norm_pulse"])
@@ -239,15 +235,15 @@ def _phase1_simple(ds_sp: xr.Dataset, params: dict, beam_comp_db: xr.DataArray) 
     max_sd_major_deg = float(params["max_sd_major_deg"])
     allow_nans = bool(params.get("allow_nans_inside_envelope", False))
 
-    (
-        ping_index_list,
-        range_sample_list,
-        iinf_list,
-        isup_list,
-        pulse_len_samples_list,
-        norm_pulse_len_list,
-        plike_peak_list,
-    ) = ([] for _ in range(7))
+    ping_index_list = []
+    range_sample_list = []
+    iinf_list = []
+    isup_list = []
+    pulse_len_samples_list = []
+    norm_pulse_len_list = []
+    plike_peak_list = []
+    target_range_list = []
+    beam_comp_db_list = []
 
     for it in range(plike_np.shape[0]):
         peaks = np.where(cand_np[it])[0]
@@ -268,20 +264,26 @@ def _phase1_simple(ds_sp: xr.Dataset, params: dict, beam_comp_db: xr.DataArray) 
                 continue
 
             iinf, isup = _envelope_bounds_1d(
-                plike_row, int(p), plike_peak - pldl_db, allow_nans=allow_nans
+                plike_row,
+                int(p),
+                plike_peak - pldl_db,
+                allow_nans=allow_nans,
             )
             if iinf is None:
                 continue
 
             pulse_len_samples = isup - iinf + 1
             norm_pulse_len = pulse_len_samples / nch
+
             if norm_pulse_len < min_norm_pulse or norm_pulse_len > max_norm_pulse:
                 continue
 
             seg_al = ali[iinf : isup + 1] * 180.0 / np.pi
             seg_ath = athi[iinf : isup + 1] * 180.0 / np.pi
+
             if np.nanstd(seg_ath) > max_sd_minor_deg:
                 continue
+
             if np.nanstd(seg_al) > max_sd_major_deg:
                 continue
 
@@ -292,9 +294,8 @@ def _phase1_simple(ds_sp: xr.Dataset, params: dict, beam_comp_db: xr.DataArray) 
             pulse_len_samples_list.append(int(pulse_len_samples))
             norm_pulse_len_list.append(float(norm_pulse_len))
             plike_peak_list.append(float(plike_peak))
-
-    if len(range_sample_list) == 0:
-        return xr.Dataset(coords={"target": np.arange(0, dtype=np.int64)})
+            target_range_list.append(float(range_np[it, p]))
+            beam_comp_db_list.append(float(beam_comp_np[it, p]))
 
     return xr.Dataset(
         data_vars=dict(
@@ -305,47 +306,23 @@ def _phase1_simple(ds_sp: xr.Dataset, params: dict, beam_comp_db: xr.DataArray) 
             pulse_len_samples=("target", np.array(pulse_len_samples_list, dtype=np.int64)),
             norm_pulse_len=("target", np.array(norm_pulse_len_list, dtype=np.float64)),
             plike_peak=("target", np.array(plike_peak_list, dtype=np.float64)),
+            target_range=("target", np.array(target_range_list, dtype=np.float64)),
+            beam_comp_db=("target", np.array(beam_comp_db_list, dtype=np.float64)),
         ),
         coords=dict(target=np.arange(len(range_sample_list), dtype=np.int64)),
     )
 
 
-# ##
-# Phase II (TS computation + threshold + overlap rejection)
-# ##
-
-
-def _compute_ts_at_peaks(
-    feats: xr.Dataset, ds_sp: xr.Dataset, beam_comp_db: xr.DataArray
-) -> xr.Dataset:
-    it = feats["ping_index"].values.astype(np.int64)
-    p = feats["range_sample"].values.astype(np.int64)
-
-    r = ds_sp["echo_range"].values[it, p]
-    a = ds_sp["sound_absorption"].values[it, p]
-    plike_peak = feats["plike_peak"].values
-    beam_comp_p = beam_comp_db.values[it, p]
-
-    ts_uncomp = plike_peak + 40.0 * np.log10(r) + 2.0 * a * r
-    ts_comp = ts_uncomp + beam_comp_p
-
-    return feats.assign(
-        target_range=("target", r.astype(float)),
-        ts_uncomp=("target", ts_uncomp.astype(float)),
-        ts_comp=("target", ts_comp.astype(float)),
-    )
-
-
 def _reject_overlaps_per_ping(feats: xr.Dataset) -> xr.Dataset:
-    if feats.dims.get("target", 0) <= 1:
+    if feats.sizes.get("target", 0) <= 1:
         return feats
 
     ping_idx = feats["ping_index"].values
     iinf = feats["iinf"].values
     isup = feats["isup"].values
-    ts_comp = feats["ts_comp"].values
+    plike_peak = feats["plike_peak"].values
 
-    keep = np.ones(feats.dims["target"], dtype=bool)
+    keep = np.ones(feats.sizes["target"], dtype=bool)
 
     for it in np.unique(ping_idx):
         ii = np.where(ping_idx == it)[0]
@@ -361,12 +338,12 @@ def _reject_overlaps_per_ping(feats: xr.Dataset) -> xr.Dataset:
                 continue
 
             k = accepted[-1]
+
             if iinf[j] > isup[k]:
                 accepted.append(j)
                 continue
 
-            # overlap: reject lower ts_comp
-            if ts_comp[j] >= ts_comp[k]:
+            if plike_peak[j] >= plike_peak[k]:
                 keep[k] = False
                 accepted[-1] = j
             else:
@@ -375,32 +352,10 @@ def _reject_overlaps_per_ping(feats: xr.Dataset) -> xr.Dataset:
     return feats.isel(target=keep)
 
 
-def _phase2(
-    ds_sp: xr.Dataset, params: dict, beam_comp_db: xr.DataArray, feats: xr.Dataset
-) -> xr.Dataset:
-    if feats.dims.get("target", 0) == 0:
-        return feats
-
-    feats = _compute_ts_at_peaks(feats, ds_sp, beam_comp_db)
-
-    # EV Method2: threshold applied to compensated TS
-    keep0 = feats["ts_comp"] >= float(params["ts_threshold_db"])
-    feats = feats.isel(target=keep0)
-
-    if feats.dims.get("target", 0) == 0:
-        return feats
-
-    feats = _reject_overlaps_per_ping(feats)
-    return feats
-
-
-# # ##
-# Output packing
-# ##
-
-
 def _pack_targets(feats: xr.Dataset, ds_sp: xr.Dataset) -> xr.Dataset:
-    if feats.sizes.get("target", 0) == 0:
+    n_targets = feats.sizes.get("target", 0)
+
+    if n_targets == 0:
         return xr.Dataset(
             data_vars=dict(
                 ping_time=("target", np.array([], dtype=ds_sp["ping_time"].dtype)),
@@ -412,10 +367,10 @@ def _pack_targets(feats: xr.Dataset, ds_sp: xr.Dataset) -> xr.Dataset:
                 pulse_len_samples=("target", np.array([], dtype=np.int64)),
                 norm_pulse_len=("target", np.array([], dtype=np.float64)),
                 target_range=("target", np.array([], dtype=np.float64)),
-                ts_uncomp=("target", np.array([], dtype=np.float64)),
-                ts_comp=("target", np.array([], dtype=np.float64)),
                 angle_major_deg=("target", np.array([], dtype=np.float64)),
                 angle_minor_deg=("target", np.array([], dtype=np.float64)),
+                beam_comp_db=("target", np.array([], dtype=np.float64)),
+                plike_peak=("target", np.array([], dtype=np.float64)),
             ),
             coords=dict(target=np.arange(0, dtype=np.int64)),
             attrs=dict(method="from_Sp"),
@@ -428,13 +383,13 @@ def _pack_targets(feats: xr.Dataset, ds_sp: xr.Dataset) -> xr.Dataset:
     angle_major_deg = ds_sp["angle_alongship"].values[it, p] * 180.0 / np.pi
     angle_minor_deg = ds_sp["angle_athwartship"].values[it, p] * 180.0 / np.pi
 
-    # add constant per target for single-channel ds_sp
     fn = ds_sp["frequency_nominal"]
     if fn.ndim == 0:
         freq_val = float(fn.values)
     else:
         freq_val = float(fn.values[0])
-    frequency_nominal = np.full(it.shape[0], freq_val, dtype=np.float64)
+
+    frequency_nominal = np.full(n_targets, freq_val, dtype=np.float64)
 
     return xr.Dataset(
         data_vars=dict(
@@ -447,79 +402,48 @@ def _pack_targets(feats: xr.Dataset, ds_sp: xr.Dataset) -> xr.Dataset:
             pulse_len_samples=("target", feats["pulse_len_samples"].values.astype(np.int64)),
             norm_pulse_len=("target", feats["norm_pulse_len"].values.astype(np.float64)),
             target_range=("target", feats["target_range"].values.astype(np.float64)),
-            ts_uncomp=("target", feats["ts_uncomp"].values.astype(np.float64)),
-            ts_comp=("target", feats["ts_comp"].values.astype(np.float64)),
             angle_major_deg=("target", angle_major_deg.astype(np.float64)),
             angle_minor_deg=("target", angle_minor_deg.astype(np.float64)),
+            beam_comp_db=("target", feats["beam_comp_db"].values.astype(np.float64)),
+            plike_peak=("target", feats["plike_peak"].values.astype(np.float64)),
         ),
-        coords=dict(target=np.arange(feats.sizes["target"], dtype=np.int64)),
+        coords=dict(target=np.arange(n_targets, dtype=np.int64)),
         attrs=dict(method="from_Sp"),
     )
 
 
-# ##
-# Public API
-# ##
 def detect_from_Sp(ds_sp: xr.Dataset, params: dict) -> xr.Dataset:
     """
-    Single-target detection from point scattering strength (Sp).
-    Current implementation follows the Echoview Method 2 workflow.
+    Detect single-target candidate locations from point scattering strength Sp.
 
-    Implements in python the EV Method 2 workflow on precomputed TS (dB) and split-beam angles:
-    (i) compute Plike from TS + range + absorption, (ii) find local Plike maxima and build
-    a -PLDL envelope, (iii) apply Phase I gates (beam-comp limit, echo-length / normalised
-    pulse length, angle std-dev), then (iv) compute TS at peaks, apply the compensated TS
-    threshold, and reject overlaps within each ping.
-
-    Notes:
-    - Input TS must be computed upstream.
-    - Angles/beam geometry are converted from degrees to radians for the beam compensation model.
-
-    Parameters
-    ----------
-    ds_sp : xr.Dataset
-        Single-channel dataset with 2D fields (ping_time, range_sample), at minimum:
-        TS, echo_range, angle_alongship, angle_athwartship, sound_absorption,
-        sample_interval, tau_effective, plus beam geometry terms if beam compensation is used.
-
-    params : dict
-        Required keys:
-          - ts_threshold_db, pldl_db
-          - min_norm_pulse, max_norm_pulse
-          - beam_comp_model ('none'|'simrad_lobe'|'provided'), max_beam_comp_db
-          - max_sd_minor_deg, max_sd_major_deg
-        Optional keys:
-          - dec_tir_samples, bottom_offset_m, exclude_above_m, exclude_below_m,
-            allow_nans_inside_envelope
-
-    Returns
-    -------
-    xr.Dataset
-        Dataset with `target` detections including ts_comp/ts_uncomp, target_range,
-        ping_time, range_sample, angles, and method metadata.
+    This follows the detection part of Echoview split-beam Method 2, but stops
+    before target-strength calculation. TS and TS(f) should be computed later
+    from the returned target locations.
     """
     params = _validate_params(params)
     ds_sp = _validate_from_Sp_dataset(ds_sp)
 
-    # ADAPTATION: degrees -> radians
-    deg2rad = np.pi / 180.0
-
     ds_sp = ds_sp.copy()
+
+    deg2rad = np.pi / 180.0
 
     ds_sp["angle_alongship"] = ds_sp["angle_alongship"] * deg2rad
     ds_sp["angle_athwartship"] = ds_sp["angle_athwartship"] * deg2rad
 
-    ds_sp["beamwidth_alongship"] = ds_sp["beamwidth_alongship"] * deg2rad
-    ds_sp["beamwidth_athwartship"] = ds_sp["beamwidth_athwartship"] * deg2rad
-
-    ds_sp["angle_offset_alongship"] = ds_sp["angle_offset_alongship"] * deg2rad
-    ds_sp["angle_offset_athwartship"] = ds_sp["angle_offset_athwartship"] * deg2rad
-    ###
+    if params["beam_comp_model"] == "simrad_lobe":
+        for v in [
+            "beamwidth_alongship",
+            "beamwidth_athwartship",
+            "angle_offset_alongship",
+            "angle_offset_athwartship",
+        ]:
+            if v not in ds_sp:
+                raise ValueError(f"ds_sp missing required variable for beam compensation: {v}")
+            ds_sp[v] = ds_sp[v] * deg2rad
 
     beam_comp_db = _beam_comp_db(ds_sp, params)
 
     feats = _phase1_simple(ds_sp, params, beam_comp_db)
-    feats = _phase2(ds_sp, params, beam_comp_db, feats)
+    feats = _reject_overlaps_per_ping(feats)
 
-    out = _pack_targets(feats, ds_sp)
-    return out
+    return _pack_targets(feats, ds_sp)
