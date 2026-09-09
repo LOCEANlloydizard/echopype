@@ -393,11 +393,15 @@ def estimate_background_noise(
         background_noise_max = extract_dB(background_noise_max)
 
     # Compute transmission loss
-    spreading_loss = 20 * np.log10(ds_Sv["echo_range"].where(ds_Sv["echo_range"] >= 1, other=1))
-    absorption_loss = 2 * ds_Sv["sound_absorption"] * ds_Sv["echo_range"]
+    echo_range = ds_Sv["echo_range"]
+
+    transmission_loss = (
+        20 * np.log10(echo_range.where(echo_range >= 1, other=1))  # spreading
+        + 2 * ds_Sv["sound_absorption"] * echo_range  # absorption
+    )
 
     # Compute power binned averages
-    power_cal = _log2lin(ds_Sv["Sv"] - spreading_loss - absorption_loss)
+    power_cal = _log2lin(ds_Sv["Sv"] - transmission_loss)
     power_cal_binned_avg = 10 * np.log10(
         power_cal.coarsen(
             ping_time=ping_num,
@@ -425,8 +429,7 @@ def estimate_background_noise(
         noise.reindex({"ping_time": power_cal["ping_time"]}, method="ffill").assign_coords(
             ping_time=ds_Sv["ping_time"]
         )
-        + spreading_loss
-        + absorption_loss
+        + transmission_loss
     )
 
     return Sv_noise
