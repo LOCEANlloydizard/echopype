@@ -396,8 +396,8 @@ def estimate_background_noise(
     echo_range = ds_Sv["echo_range"]
 
     transmission_loss = (
-        20 * np.log10(echo_range.where(echo_range >= 1, other=1))
-        + 2 * ds_Sv["sound_absorption"] * echo_range
+        20 * np.log10(echo_range.where(echo_range >= 1, other=1))  # spreading
+        + 2 * ds_Sv["sound_absorption"] * echo_range  # absorption
     )
 
     # Compute power binned averages
