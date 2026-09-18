@@ -24,7 +24,7 @@ from urllib.request import urlretrieve
 import fsspec
 import pooch
 
-MINIO_URL = "https://dl.min.io/server/minio/release/windows-amd64/minio.exe"
+MINIO_URL = "https://dl.min.io/aistor/minio/release/windows-amd64/minio.exe"
 MINIO_BIN = pathlib.Path(".ci_helpers") / "minio.exe"
 STATE_DIR = pathlib.Path(".ci_helpers") / ".state"
 STATE_DIR.mkdir(parents=True, exist_ok=True)
