@@ -407,83 +407,6 @@ def _pack_targets(feats: xr.Dataset, ds_sp: xr.Dataset) -> xr.Dataset:
     n_targets = feats.sizes.get("single_target", 0)
     channel_value = ds_sp["channel"].item()
 
-    if n_targets == 0:
-        return xr.Dataset(
-            data_vars=dict(
-                channel=(
-                    "single_target",
-                    np.array([], dtype=object),
-                ),
-                ping_time=(
-                    "single_target",
-                    np.array([], dtype=ds_sp["ping_time"].dtype),
-                ),
-                range_sample=(
-                    "single_target",
-                    np.array([], dtype=np.int64),
-                ),
-                frequency_nominal=(
-                    "single_target",
-                    np.array([], dtype=np.float64),
-                ),
-                ping_index=(
-                    "single_target",
-                    np.array([], dtype=np.int64),
-                ),
-                iinf=(
-                    "single_target",
-                    np.array([], dtype=np.int64),
-                ),
-                isup=(
-                    "single_target",
-                    np.array([], dtype=np.int64),
-                ),
-                pulse_len_samples=(
-                    "single_target",
-                    np.array([], dtype=np.int64),
-                ),
-                norm_pulse_len=(
-                    "single_target",
-                    np.array([], dtype=np.float64),
-                ),
-                single_target_range=(
-                    "single_target",
-                    np.array([], dtype=np.float64),
-                ),
-                single_target_alongship_angle=(
-                    "single_target",
-                    np.array([], dtype=np.float64),
-                ),
-                single_target_athwartship_angle=(
-                    "single_target",
-                    np.array([], dtype=np.float64),
-                ),
-                single_target_athwartship_angle_sd=(
-                    "single_target",
-                    np.array([], dtype=np.float64),
-                ),
-                single_target_alongship_angle_sd=(
-                    "single_target",
-                    np.array([], dtype=np.float64),
-                ),
-                beam_comp_db=(
-                    "single_target",
-                    np.array([], dtype=np.float64),
-                ),
-                plike_peak=(
-                    "single_target",
-                    np.array([], dtype=np.float64),
-                ),
-            ),
-            coords={
-                "single_target": np.arange(
-                    n_targets,
-                    dtype=np.int64,
-                )
-            },
-            attrs=dict(method="from_Sp"),
-        )
-
     it = feats["ping_index"].values.astype(np.int64)
     p = feats["range_sample"].values.astype(np.int64)
 
@@ -491,13 +414,14 @@ def _pack_targets(feats: xr.Dataset, ds_sp: xr.Dataset) -> xr.Dataset:
     single_target_alongship_angle = ds_sp["angle_alongship"].values[it, p] * 180.0 / np.pi
     single_target_athwartship_angle = ds_sp["angle_athwartship"].values[it, p] * 180.0 / np.pi
 
-    fn = ds_sp["frequency_nominal"]
-    if fn.ndim == 0:
-        freq_val = float(fn.values)
-    else:
-        freq_val = float(fn.values[0])
-
-    frequency_nominal = np.full(n_targets, freq_val, dtype=np.float64)
+    frequency_nominal = np.empty(n_targets, dtype=np.float64)
+    if n_targets:
+        fn = ds_sp["frequency_nominal"]
+        if fn.ndim == 0:
+            freq_val = float(fn.values)
+        else:
+            freq_val = float(fn.values[0])
+        frequency_nominal.fill(freq_val)
     channel = np.full(
         n_targets,
         channel_value,
